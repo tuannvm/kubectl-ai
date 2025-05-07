@@ -10,6 +10,14 @@ First, ensure that kubectl is installed and configured.
 
 ### Installation
 
+#### Quick Install
+
+```shell
+curl -sSL https://raw.githubusercontent.com/GoogleCloudPlatform/kubectl-ai/main/install.sh | bash
+```
+
+#### Manual Installation
+
 1. Download the latest release from the [releases page](https://github.com/GoogleCloudPlatform/kubectl-ai/releases/latest) for your target machine.
 
 2. Untar the release, make the binary executable and move it to a directory in your $PATH (as shown below).
