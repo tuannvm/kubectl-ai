@@ -9,7 +9,11 @@ OS="$(uname | tr '[:upper:]' '[:lower:]')"
 case "$OS" in
   linux)   OS="linux" ;;
   darwin)  OS="darwin" ;;
-  *) echo "Unsupported OS: $OS"; exit 1 ;;
+  *)
+    echo "If you are on Windows or another unsupported OS, please follow the manual installation instructions at:"
+    echo "https://github.com/GoogleCloudPlatform/kubectl-ai#manual-installation"
+    exit 1
+    ;;
 esac
 
 # Detect ARCH
@@ -17,7 +21,11 @@ ARCH="$(uname -m)"
 case "$ARCH" in
   x86_64|amd64) ARCH="amd64" ;;
   arm64|aarch64) ARCH="arm64" ;;
-  *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+  *)
+    echo "If you are on an unsupported architecture, please follow the manual installation instructions at:"
+    echo "https://github.com/GoogleCloudPlatform/kubectl-ai#manual-installation"
+    exit 1
+    ;;
 esac
 
 # Get latest version tag from GitHub API (portable, no grep -P)
