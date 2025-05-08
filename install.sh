@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Check for required commands
+for cmd in curl tar; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: $cmd is not installed. Please install $cmd to proceed."
+    exit 1
+  fi
+done
+
 REPO="GoogleCloudPlatform/kubectl-ai"
 BINARY="kubectl-ai"
 
 # Detect OS
-OS="$(uname | tr '[:upper:]' '[:lower:]')"
-case "$OS" in
-  linux)   OS="linux" ;;
-  darwin)  OS="darwin" ;;
+sysOS="$(uname | tr '[:upper:]' '[:lower:]')"
+case "$sysOS" in
+  linux)   OS="Linux" ;;
+  darwin)  OS="Darwin" ;;
   *)
     echo "If you are on Windows or another unsupported OS, please follow the manual installation instructions at:"
     echo "https://github.com/GoogleCloudPlatform/kubectl-ai#manual-installation"
@@ -59,4 +67,3 @@ sudo install -m 0755 "$BINARY" /usr/local/bin/
 rm "$TARBALL"
 
 echo "✅ $BINARY installed successfully! Run '$BINARY --help' to get started."
-
