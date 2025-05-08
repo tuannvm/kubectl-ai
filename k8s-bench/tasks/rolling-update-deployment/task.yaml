@@ -1,0 +1,6 @@
+script:
+- prompt: "Roll out a new image for deployment 'web-app' in namespace 'rollout-test' from 'nginx:1.21' to 'nginx:1.22' ensuring zero downtime"
+setup: "setup.sh"
+verifier: "verify.sh"
+cleanup: "cleanup.sh"
+difficulty: "medium"
