@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	openai "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -297,33 +298,61 @@ func (cs *openAIChatSession) Send(ctx context.Context, contents ...any) (ChatRes
 }
 
 // SendStreaming sends the user message(s) and returns an iterator for the LLM response stream.
-// NOTE: Due to limitations in the openai-go v0.1.0-beta.10 library, this function
-// simulates streaming by making a single non-streaming call and returning an iterator
-// that yields the single response. This satisfies the agent's interface requirement.
+// FIRST_EDIT: implement actual streaming via NewStreaming
 func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any) (ChatResponseIterator, error) {
-	klog.V(1).InfoS("openAIChatSession.SendStreaming called (simulated)", "model", cs.model)
-
-	// Call the non-streaming Send method we implemented earlier
-	singleResponse, err := cs.Send(ctx, contents...)
-	if err != nil {
-		// Send already logs errors, just wrap it
-		return nil, fmt.Errorf("simulated streaming failed during non-streaming call: %w", err)
+	klog.V(1).InfoS("openAIChatSession.SendStreaming called (streaming)", "model", cs.model)
+	// 1. Append user message(s) to history
+	for _, content := range contents {
+		switch c := content.(type) {
+		case string:
+			klog.V(2).Infof("Adding user message to history: %s", c)
+			cs.history = append(cs.history, openai.UserMessage(c))
+		case FunctionCallResult:
+			klog.V(2).Infof("Adding tool call result to history: Name=%s, ID=%s", c.Name, c.ID)
+			resultJSON, err := json.Marshal(c.Result)
+			if err != nil {
+				klog.Errorf("Failed to marshal function call result: %v", err)
+				return nil, fmt.Errorf("failed to marshal function call result %q: %w", c.Name, err)
+			}
+			cs.history = append(cs.history, openai.ToolMessage(string(resultJSON), c.ID))
+		default:
+			klog.Warningf("Unhandled content type in SendStreaming: %T", content)
+			return nil, fmt.Errorf("unhandled content type: %T", content)
+		}
 	}
-
-	// Return an iterator function that yields the single response once.
-	var yielded bool
-	iteratorFunc := func(yield func(ChatResponse, error) bool) {
-		if !yielded {
-			yielded = true
-			// Yield the single response. If yield returns false, stop early.
-			if !yield(singleResponse, nil) {
-				return
+	// 2. Prepare the API request
+	chatReq := openai.ChatCompletionNewParams{
+		Model:    openai.ChatModel(cs.model),
+		Messages: cs.history,
+	}
+	if len(cs.tools) > 0 {
+		chatReq.Tools = cs.tools
+	}
+	// 3. Call the OpenAI streaming API
+	stream := cs.client.Chat.Completions.NewStreaming(ctx, chatReq)
+	// Iterator function
+	iterator := func(yield func(ChatResponse, error) bool) {
+		defer stream.Close()
+		var builder strings.Builder
+		for stream.Next() {
+			chunk := stream.Current()
+			for _, choice := range chunk.Choices {
+				if choice.Delta.Content != "" {
+					builder.WriteString(choice.Delta.Content)
+					part := &openAIPart{content: builder.String()}
+					candidate := &openAIStreamingCandidate{parts: []Part{part}}
+					resp := &openAIStreamingResponse{candidates: []Candidate{candidate}}
+					if !yield(resp, nil) {
+						return
+					}
+				}
 			}
 		}
-		// Subsequent calls do nothing, effectively ending the stream.
+		if err := stream.Err(); err != nil {
+			yield(nil, err)
+		}
 	}
-
-	return iteratorFunc, nil
+	return iterator, nil
 }
 
 // IsRetryableError returns false for now.
@@ -430,4 +459,36 @@ func (p *openAIPart) AsFunctionCalls() ([]FunctionCall, bool) {
 		}
 	}
 	return gollmCalls, true
+}
+
+// SECOND_EDIT: add streaming response types
+
+type openAIStreamingCandidate struct {
+	parts []Part
+}
+
+func (c *openAIStreamingCandidate) Parts() []Part {
+	return c.parts
+}
+
+func (c *openAIStreamingCandidate) String() string {
+	var sb strings.Builder
+	for _, part := range c.parts {
+		if text, ok := part.AsText(); ok {
+			sb.WriteString(text)
+		}
+	}
+	return sb.String()
+}
+
+type openAIStreamingResponse struct {
+	candidates []Candidate
+}
+
+func (r *openAIStreamingResponse) UsageMetadata() any {
+	return nil
+}
+
+func (r *openAIStreamingResponse) Candidates() []Candidate {
+	return r.candidates
 }
