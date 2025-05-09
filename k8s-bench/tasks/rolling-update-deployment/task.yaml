@@ -1,5 +1,5 @@
 script:
-- prompt: "Roll out a new image for deployment 'web-app' in namespace 'rollout-test' from 'nginx:1.21' to 'nginx:1.22' ensuring zero downtime"
+- prompt: "Update the image of the web-app in rollout-test namespace to 1.22 version. Ensure there is zero downtime (or minimize disruption)"
 setup: "setup.sh"
 verifier: "verify.sh"
 cleanup: "cleanup.sh"
