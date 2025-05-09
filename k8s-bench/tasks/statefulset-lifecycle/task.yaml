@@ -1,5 +1,5 @@
 script:
-- prompt: "Deploy a StatefulSet named 'db' with 3 replicas in namespace 'statefulset-test' using a 1Gi volumeClaimTemplate. Scale to 5 replicas, then scale back to 2, verifying stable network identities and persistent storage across pod restarts."
+- prompt: "Deploy a 5-replica StatefulSet db in namespace statefulset-test (already available) with each pod mounting a 1Gi PVC at /data containing a test file. Scale back to 2, verifying pods db-0 and db-1 retain /data/test."
 setup: "setup.sh"
 verifier: "verify.sh"
 cleanup: "cleanup.sh"
