@@ -298,7 +298,6 @@ func (cs *openAIChatSession) Send(ctx context.Context, contents ...any) (ChatRes
 }
 
 // SendStreaming sends the user message(s) and returns an iterator for the LLM response stream.
-// FIRST_EDIT: implement actual streaming via NewStreaming
 func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any) (ChatResponseIterator, error) {
 	klog.V(1).InfoS("openAIChatSession.SendStreaming called (streaming)", "model", cs.model)
 	// 1. Append user message(s) to history
@@ -320,6 +319,7 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 			return nil, fmt.Errorf("unhandled content type: %T", content)
 		}
 	}
+
 	// 2. Prepare the API request
 	chatReq := openai.ChatCompletionNewParams{
 		Model:    openai.ChatModel(cs.model),
@@ -328,8 +328,10 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 	if len(cs.tools) > 0 {
 		chatReq.Tools = cs.tools
 	}
-	// 3. Call the OpenAI streaming API
+
+	// Call the OpenAI streaming API
 	stream := cs.client.Chat.Completions.NewStreaming(ctx, chatReq)
+
 	// Iterator function
 	iterator := func(yield func(ChatResponse, error) bool) {
 		defer stream.Close()
@@ -346,10 +348,16 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 						return
 					}
 				}
+
 			}
+
 		}
+		// After stream ends
 		if err := stream.Err(); err != nil {
 			yield(nil, err)
+		} else {
+			// End-of-stream sentinel
+			yield(nil, nil)
 		}
 	}
 	return iterator, nil
