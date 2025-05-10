@@ -311,24 +311,19 @@ func setupViperEnv() {
 // This is a best-effort check that can be expanded as more providers are supported.
 func checkNativeStreamingSupport(providerID string) bool {
 	switch providerID {
-	case "openai":
-		// As of now, the openai-go library doesn't support native streaming
-		return false
-	case "grok":
-		// Grok provider uses simulated streaming
+	case "azopenai":
 		return false
 	case "gemini":
 		// Gemini provider supports native streaming
 		return true
-	case "ollama":
-		// Ollama provider supports native streaming
-		return true
+	case "grok":
+		return false
 	case "llamacpp":
-		// LlamaCpp provider supports native streaming
-		return true
-	case "azopenai":
-		// Azure OpenAI provider supports native streaming
-		return true
+		return false
+	case "ollama":
+		return false
+	case "openai":
+		return false
 	default:
 		// For unknown providers, assume they don't support native streaming
 		// This is the safer default
@@ -352,26 +347,6 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		}
 
 		klog.V(1).Infof("Provider %s supports native streaming, continuing with --enable-simulated-streaming=false", opt.ProviderID)
-
-		// Set environment variables based on the chosen provider
-		// The common variable can be used by any provider
-		requireNativeStreamingEnv := fmt.Sprintf("%s_REQUIRE_NATIVE_STREAMING", viperEnvPrefix)
-		if err := os.Setenv(requireNativeStreamingEnv, "true"); err != nil {
-			return fmt.Errorf("failed to set %s: %w", requireNativeStreamingEnv, err)
-		}
-
-		// Set provider-specific variables
-		switch opt.ProviderID {
-		case "openai":
-			// For OpenAI provider - for backward compatibility with the OpenAI implementation
-			if err := os.Setenv("OPENAI_REQUIRE_NATIVE_STREAMING", "true"); err != nil {
-				return fmt.Errorf("failed to set OPENAI_REQUIRE_NATIVE_STREAMING: %w", err)
-			}
-			klog.V(1).Infof("Set OPENAI_REQUIRE_NATIVE_STREAMING=true for provider %s and model %s", opt.ProviderID, opt.ModelID)
-		default:
-			// For other providers, the common variable should be sufficient
-			klog.V(1).Infof("Using %s=true for provider %s and model %s", requireNativeStreamingEnv, opt.ProviderID, opt.ModelID)
-		}
 	}
 
 	if opt.MCPServer {
