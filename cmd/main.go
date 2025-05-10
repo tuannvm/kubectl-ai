@@ -92,7 +92,6 @@ type Options struct {
 	// EnableSimulatedStreaming indicates whether simulated streaming is allowed when native streaming is not available.
 	// If false, the application will fail fast if native streaming is not supported by the selected model/provider.
 	// This is useful for applications that depend on real-time token-by-token streaming for UI updates or early termination.
-	// For all providers: Sets ${viperEnvPrefix}_REQUIRE_NATIVE_STREAMING=true when false
 	EnableSimulatedStreaming bool `json:"enableSimulatedStreaming,omitempty"`
 
 	// UserInterface is the type of user interface to use.
