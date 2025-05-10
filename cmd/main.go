@@ -89,6 +89,11 @@ type Options struct {
 	PromptTemplateFilePath string `json:"promptTemplateFilePath,omitempty"`
 	TracePath              string `json:"tracePath,omitempty"`
 	RemoveWorkDir          bool   `json:"removeWorkDir,omitempty"`
+	// EnableSimulatedStreaming indicates whether simulated streaming is allowed when native streaming is not available.
+	// If false, the application will fail fast if native streaming is not supported by the selected model/provider.
+	// This is useful for applications that depend on real-time token-by-token streaming for UI updates or early termination.
+	// For all providers: Sets ${viperEnvPrefix}_REQUIRE_NATIVE_STREAMING=true when false
+	EnableSimulatedStreaming bool `json:"enableSimulatedStreaming,omitempty"`
 
 	// UserInterface is the type of user interface to use.
 	UserInterface UserInterface `json:"userInterface,omitempty"`
@@ -136,6 +141,7 @@ func (o *Options) InitDefaults() {
 	o.PromptTemplateFilePath = ""
 	o.TracePath = filepath.Join(os.TempDir(), "kubectl-ai-trace.txt")
 	o.RemoveWorkDir = false
+	o.EnableSimulatedStreaming = true
 
 	// Default to terminal UI
 	o.UserInterface = UserInterfaceTerminal
@@ -266,6 +272,7 @@ func (opt *Options) bindCLIFlagsToViper(f *pflag.FlagSet) error {
 	f.BoolVar(&opt.MCPServer, "mcp-server", opt.MCPServer, "run in MCP server mode")
 	f.BoolVar(&opt.EnableToolUseShim, "enable-tool-use-shim", opt.EnableToolUseShim, "enable tool use shim")
 	f.BoolVar(&opt.Quiet, "quiet", opt.Quiet, "run in non-interactive mode, requires a query to be provided as a positional argument")
+	f.BoolVar(&opt.EnableSimulatedStreaming, "enable-simulated-streaming", opt.EnableSimulatedStreaming, "allow simulated streaming when native streaming is not available (default: true)")
 
 	f.Var(&opt.UserInterface, "user-interface", "user interface mode to use")
 
@@ -300,10 +307,71 @@ func setupViperEnv() {
 	viper.AutomaticEnv()
 }
 
+// checkNativeStreamingSupport attempts to determine if the provider supports native streaming.
+// This is a best-effort check that can be expanded as more providers are supported.
+func checkNativeStreamingSupport(providerID string) bool {
+	switch providerID {
+	case "openai":
+		// As of now, the openai-go library doesn't support native streaming
+		return false
+	case "grok":
+		// Grok provider uses simulated streaming
+		return false
+	case "gemini":
+		// Gemini provider supports native streaming
+		return true
+	case "ollama":
+		// Ollama provider supports native streaming
+		return true
+	case "llamacpp":
+		// LlamaCpp provider supports native streaming
+		return true
+	case "azopenai":
+		// Azure OpenAI provider supports native streaming
+		return true
+	default:
+		// For unknown providers, assume they don't support native streaming
+		// This is the safer default
+		klog.Warningf("Unknown provider %s, assuming no native streaming support", providerID)
+		return false
+	}
+}
+
+// RunRootCommand is the main entry point for the kubectl-ai command.
 func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	// resolve kubeconfig path with priority: flag/env > KUBECONFIG > default path
 	if err := resolveKubeConfigPath(&opt); err != nil {
 		return fmt.Errorf("failed to resolve kubeconfig path: %w", err)
+	}
+
+	// If enable simulated streaming is false, check if the provider supports native streaming
+	if !opt.EnableSimulatedStreaming {
+		hasNativeStreaming := checkNativeStreamingSupport(opt.ProviderID)
+		if !hasNativeStreaming {
+			return fmt.Errorf("provider %s does not support native streaming, but --enable-simulated-streaming=false was specified", opt.ProviderID)
+		}
+
+		klog.V(1).Infof("Provider %s supports native streaming, continuing with --enable-simulated-streaming=false", opt.ProviderID)
+
+		// Set environment variables based on the chosen provider
+		// The common variable can be used by any provider
+		requireNativeStreamingEnv := fmt.Sprintf("%s_REQUIRE_NATIVE_STREAMING", viperEnvPrefix)
+		if err := os.Setenv(requireNativeStreamingEnv, "true"); err != nil {
+			return fmt.Errorf("failed to set %s: %w", requireNativeStreamingEnv, err)
+		}
+
+		// Set provider-specific variables
+		switch opt.ProviderID {
+		case "openai":
+			// For OpenAI provider - for backward compatibility with the OpenAI implementation
+			if err := os.Setenv("OPENAI_REQUIRE_NATIVE_STREAMING", "true"); err != nil {
+				return fmt.Errorf("failed to set OPENAI_REQUIRE_NATIVE_STREAMING: %w", err)
+			}
+			klog.V(1).Infof("Set OPENAI_REQUIRE_NATIVE_STREAMING=true for provider %s and model %s", opt.ProviderID, opt.ModelID)
+		default:
+			// For other providers, the common variable should be sufficient
+			klog.V(1).Infof("Using %s=true for provider %s and model %s", requireNativeStreamingEnv, opt.ProviderID, opt.ModelID)
+		}
 	}
 
 	if opt.MCPServer {
