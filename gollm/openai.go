@@ -20,30 +20,32 @@ import (
 	"errors"
 	"fmt"
 
+	"os"
+
 	openai "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
-	"github.com/spf13/viper"
 	"k8s.io/klog/v2"
 )
 
-// Register the OpenAI provider factory on package initialization.
-// The new factory function supports ClientOptions.
-func init() {
-	// Bind environment variables for backward compatibility.
-	// These follow the official OpenAI SDK environment variable naming convention
-	// (OPENAI_API_KEY, OPENAI_API_BASE, etc.) and act as fallbacks with lower priority
-	// than CLI flags or KUBECTL_AI_* prefixed env vars, allowing a seamless experience
-	// for users familiar with standard OpenAI tooling.
-	envVars := map[string]string{
-		"openai-api-key":  "OPENAI_API_KEY",
-		"openai-endpoint": "OPENAI_ENDPOINT",
-		"openai-api-base": "OPENAI_API_BASE",
-		"model":           "OPENAI_MODEL",
-	}
+// Package-level env var storage (OpenAI env)
+var (
+	openAIAPIKey   string
+	openAIEndpoint string
+	openAIAPIBase  string
+	openAIModel    string
+)
 
-	for viperKey, envVar := range envVars {
-		_ = viper.BindEnv(viperKey, envVar)
-	}
+// init reads and caches OpenAI environment variables:
+//   - OPENAI_API_KEY, OPENAI_ENDPOINT, OPENAI_API_BASE, OPENAI_MODEL
+//
+// These serve as defaults; the model can be overridden by the Cobra --model flag.
+// After loading env values, it registers the OpenAI provider factory.
+func init() {
+	// Load environment variables
+	openAIAPIKey = os.Getenv("OPENAI_API_KEY")
+	openAIEndpoint = os.Getenv("OPENAI_ENDPOINT")
+	openAIAPIBase = os.Getenv("OPENAI_API_BASE")
+	openAIModel = os.Getenv("OPENAI_MODEL")
 
 	// Register "openai" as the provider ID
 	if err := RegisterProvider("openai", newOpenAIClientFactory); err != nil {
@@ -61,7 +63,7 @@ func init() {
 
 // newOpenAIClientFactory is the factory function for creating OpenAI clients with options.
 func newOpenAIClientFactory(ctx context.Context, opts ClientOptions) (Client, error) {
-	return NewOpenAIClient(ctx, opts)
+	return NewOpenAIClient(ctx)
 }
 
 // OpenAIClient implements the gollm.Client interface for OpenAI models.
@@ -77,7 +79,7 @@ var _ Client = &OpenAIClient{}
 // 1. Explicitly provided model parameter (highest)
 // 2. CLI flag --model
 // 3. KUBECTL_AI_MODEL environment variable
-// 4. OPENAI_MODEL environment variable (via binding in init())
+// 4. OPENAI_MODEL environment variable (via os.Getenv)
 // 5. Default value "gpt-4.1" (lowest)
 func getOpenAIModel(model string) string {
 	// If explicit model is provided, use it
@@ -87,7 +89,7 @@ func getOpenAIModel(model string) string {
 	}
 
 	// Check configuration
-	configModel := viper.GetString("model")
+	configModel := openAIModel
 	if configModel != "" {
 		klog.V(1).Infof("Using model from config: %s", configModel)
 		return configModel
@@ -99,25 +101,21 @@ func getOpenAIModel(model string) string {
 }
 
 // NewOpenAIClient creates a new client for interacting with OpenAI.
-// It reads the API key and optional endpoint from viper configuration.
-// For backward compatibility, it also supports OPENAI_API_KEY and
-// OPENAI_ENDPOINT environment variables through viper bindings.
+// It reads the API key and optional endpoint from environment variables.
 func NewOpenAIClient(ctx context.Context) (*OpenAIClient, error) {
-	// Get API key from viper configuration
-	// This will also check the OPENAI_API_KEY env var due to the binding in init()
-	apiKey := viper.GetString("openai-api-key")
+	// Get API key from loaded env var
+	apiKey := openAIAPIKey
 	if apiKey == "" {
-		return nil, errors.New("OpenAI API key not found. Set via OPENAI_API_KEY, KUBECTL_AI_OPENAI_API_KEY env var, or openai-api-key in config")
+		return nil, errors.New("OpenAI API key not found. Set via OPENAI_API_KEY env var")
 	}
 
 	// Set options for client creation
 	options := []option.RequestOption{option.WithAPIKey(apiKey)}
 
 	// Check for custom endpoint or API base URL
-	// Endpoint takes precedence over API base if both are defined
-	baseURL := viper.GetString("openai-endpoint")
+	baseURL := openAIEndpoint
 	if baseURL == "" {
-		baseURL = viper.GetString("openai-api-base")
+		baseURL = openAIAPIBase
 	}
 
 	if baseURL != "" {
