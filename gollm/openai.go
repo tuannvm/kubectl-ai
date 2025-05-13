@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
 	"os"
 
 	openai "github.com/openai/openai-go"
@@ -75,12 +74,6 @@ type OpenAIClient struct {
 var _ Client = &OpenAIClient{}
 
 // getOpenAIModel returns the appropriate model based on configuration and explicitly provided model name
-// Priority order for model selection:
-// 1. Explicitly provided model parameter (highest)
-// 2. CLI flag --model
-// 3. KUBECTL_AI_MODEL environment variable
-// 4. OPENAI_MODEL environment variable (via os.Getenv)
-// 5. Default value "gpt-4.1" (lowest)
 func getOpenAIModel(model string) string {
 	// If explicit model is provided, use it
 	if model != "" {
@@ -101,7 +94,6 @@ func getOpenAIModel(model string) string {
 }
 
 // NewOpenAIClient creates a new client for interacting with OpenAI.
-// It reads the API key and optional endpoint from environment variables.
 func NewOpenAIClient(ctx context.Context) (*OpenAIClient, error) {
 	// Get API key from loaded env var
 	apiKey := openAIAPIKey
@@ -127,8 +119,6 @@ func NewOpenAIClient(ctx context.Context) (*OpenAIClient, error) {
 		client: openai.NewClient(options...),
 	}, nil
 }
-
-// (Moved to factory.go, just call gollm.createCustomHTTPClient)
 
 // Close cleans up any resources used by the client.
 func (c *OpenAIClient) Close() error {
@@ -214,8 +204,6 @@ func (c *OpenAIClient) SetResponseSchema(schema *Schema) error {
 // Note: This may not work with all OpenAI-compatible providers if they don't fully implement
 // the Models.List endpoint or return data in a different format.
 func (c *OpenAIClient) ListModels(ctx context.Context) ([]string, error) {
-	// No need to reconfigure the client with endpoint options,
-	// as the client was already properly configured in NewOpenAIClient
 	res, err := c.client.Models.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error listing models from OpenAI: %w", err)
