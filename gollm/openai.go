@@ -61,8 +61,8 @@ func init() {
 	}
 }
 
-// newOpenAIClientFactory is the factory function for creating OpenAI clients with options.
-func newOpenAIClientFactory(ctx context.Context, opts ClientOptions) (Client, error) {
+// newOpenAIClientFactory is the factory function for creating OpenAI clients.
+func newOpenAIClientFactory(ctx context.Context, _ ClientOptions) (Client, error) {
 	return NewOpenAIClient(ctx)
 }
 
