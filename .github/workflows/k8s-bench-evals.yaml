@@ -1,0 +1,48 @@
+# Workflow to run k8s-bench evaluations on push and PR
+name: k8s-bench-evals
+
+on:
+  pull_request:
+    paths:
+      - 'k8s-bench/tasks/**'
+  push:
+    branches: [main]
+    paths:
+      - 'k8s-bench/tasks/**'
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Node.js runtime
+        run: |
+          apt-get update
+          apt-get install -y curl gnupg
+          curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+          apt-get install -y nodejs
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - name: Install Docker CLI
+        run: |
+          apt-get update
+          apt-get install -y docker.io
+      - name: Set up Kind cluster
+        uses: engineerd/setup-kind@v0.6.1
+      - name: Run k8s-bench evaluations
+        run: |
+          go run ./k8s-bench/main.go run \
+            --tasks-dir=k8s-bench/tasks \
+            --output-dir=eval-results \
+            --concurrency=1
+      - name: Upload results
+        uses: actions/upload-artifact@v3
+        with:
+          name: k8s-bench-results
+          path: eval-results
