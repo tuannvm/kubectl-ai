@@ -1,6 +1,6 @@
 # `kubectl-ai` as a MCP Server
 
-`kubectl-ai` can ack as a [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol) server. This allows AI agents and IDEs to act as MCP clients and connect to the `kubectl-ai` MCP server, effectively interacting with your local Kubernetes environment via `kubectl`.
+`kubectl-ai` can act as a [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol) server. This allows MCP clients such as AI agents and IDEs (Claude, Cursor) to connect to the `kubectl-ai` MCP server, effectively interacting with your local Kubernetes environment via `kubectl`.
 
 ## Overview
 
@@ -42,13 +42,34 @@ Cursor also supports MCP servers. You can [configure `kubectl-ai` MCP Server](ht
       // Find the right path by running `which kubectl-ai`
       "command": "/usr/local/bin/kubectl-ai",
       // The `--kubeconfig` argument can often be omitted if your `kubectl` is already configured to point to the desired cluster
-      "args": ["--mcp-server", "~/.kube/config", "--mcp-server"],
+      "args": ["--kubeconfig", "~/.kube/config", "--mcp-server"],
       "env": {
         // Define specific environment variables needed
       }
     }
   }
 }
+```
+
+### VS Code
+
+[VS Code](https://code.visualstudio.com/docs/copilot/chat/mcp-servers) supports MCP servers as well. The `.vscode/settings.json` file could be configured as follows:
+
+```json
+    "mcp": {
+        "servers": {
+            "kubectl-ai": {
+                "type": "stdio",
+                // Find the right path by running `which kubectl-ai`
+                "command": "/usr/local/bin/kubectl-ai",
+                // The `--kubeconfig` argument can often be omitted if your `kubectl` is already configured to point to the desired cluster
+                "args": ["--kubeconfig", "~/.kube/config", "--mcp-server"],
+                "env": {
+                  // Define specific environment variables needed
+                }
+            }
+        }
+    }
 ```
 
 ## Demo

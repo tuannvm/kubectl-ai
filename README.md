@@ -1,5 +1,9 @@
 # kubectl-ai
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/GoogleCloudPlatform/kubectl-ai)](https://goreportcard.com/report/github.com/GoogleCloudPlatform/kubectl-ai)
+![GitHub License](https://img.shields.io/github/license/GoogleCloudPlatform/kubectl-ai)
+[![GitHub stars](https://img.shields.io/github/stars/GoogleCloudPlatform/kubectl-ai.svg)](https://github.com/GoogleCloudPlatform/kubectl-ai/stargazers)
+
 `kubectl-ai` acts as an intelligent interface, translating user intent into
 precise Kubernetes operations, making Kubernetes management more accessible and
 efficient.
@@ -58,6 +62,8 @@ kubectl-ai --quiet --model gemini-2.5-flash-preview-04-17 "check logs for nginx 
 #### Using AI models running locally (ollama or llama.cpp)
 
 You can use `kubectl-ai` with AI models running locally. `kubectl-ai` supports [ollama](https://ollama.com/) and [llama.cpp](https://github.com/ggml-org/llama.cpp) to use the AI models running locally.
+
+Additionally, the [`modelserving`](modelserving/) directory provides tools and instructions for deploying your own `llama.cpp`-based LLM serving endpoints locally or on a Kubernetes cluster. This allows you to host models like Gemma directly in your environment.
 
 An example of using Google's `gemma3` model with `ollama`:
 
@@ -180,6 +186,10 @@ kubectl-ai --llm-provider=openai --model=gpt-4.1 --quiet "scale the nginx deploy
 ```
 
 The `kubectl-ai` will process your query, execute the appropriate kubectl commands, and provide you with the results and explanations.
+
+## MCP server
+
+You can also use `kubectl-ai` as a MCP server that exposes `kubectl` as one of the tools to interact with locally configured k8s environment. See [mcp docs](./docs/mcp.md) for more details.
 
 ## k8s-bench
 
