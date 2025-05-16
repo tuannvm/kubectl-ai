@@ -20,9 +20,8 @@ on:
   workflow_dispatch:
     inputs:
       task_pattern:
-        description: "Task name or glob pattern to test (e.g. scale-*, my-task)"
+        description: "Task name or glob pattern to test (must not be '*' or empty; e.g. scale-my-task, scale-foo)"
         required: true
-        default: "scale-"
 
 jobs:
   run-eval:
@@ -32,11 +31,17 @@ jobs:
       contents: "read"
       id-token: "write"
     steps:
+      - name: Validate task_pattern input
+        run: |
+          if [[ -z "${{ github.event.inputs.task_pattern }}" || "${{ github.event.inputs.task_pattern }}" == "*" || "${{ github.event.inputs.task_pattern }}" == "all" ]]; then
+            echo "Error: You must provide a specific task name or pattern. Wildcards or empty values are not allowed."
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - name: Kind Cluster Setup
         uses: ./.github/actions/kind-cluster-setup
         with:
-          cluster_name: periodic-eval-cluster
+          cluster_name: ${{ github.head_ref || github.ref_name }}
       - name: Run evals
         # In the future, more options (provider/model/tool-use-shim) may be user-selectable.
         # For now, these are fixed for CI safety and consistency.
