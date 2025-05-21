@@ -22,7 +22,6 @@ import (
 	"os"
 
 	openai "github.com/openai/openai-go"
-	"github.com/openai/openai-go/constant"
 	"github.com/openai/openai-go/option"
 	"k8s.io/klog/v2"
 )
@@ -540,17 +539,14 @@ func (c *grokStreamCandidate) Parts() []Part {
 		// Convert ChatCompletionToolCallDelta to ChatCompletionMessageToolCall
 		toolCalls := make([]openai.ChatCompletionMessageToolCall, 0, len(c.streamChoice.Delta.ToolCalls))
 		for _, delta := range c.streamChoice.Delta.ToolCalls {
+			// Create a new ChatCompletionMessageToolCall directly
 			toolCall := openai.ChatCompletionMessageToolCall{
 				ID: delta.ID,
 				Function: openai.ChatCompletionMessageToolCallFunction{
 					Name:      delta.Function.Name,
 					Arguments: delta.Function.Arguments,
 				},
-			}
-
-			// Set the Type field safely
-			if delta.Type == "function" {
-				toolCall.Type = constant.FunctionTypeFunction
+				Type: "function", // The type is always "function" for function calls
 			}
 
 			toolCalls = append(toolCalls, toolCall)
