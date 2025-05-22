@@ -71,7 +71,6 @@ func BuildRootCommand(opt *Options) (*cobra.Command, error) {
 	if err := opt.bindCLIFlags(rootCmd.Flags()); err != nil {
 		return nil, err
 	}
-
 	return rootCmd, nil
 }
 
