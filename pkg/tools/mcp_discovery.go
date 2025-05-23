@@ -33,16 +33,12 @@ func init() {
 		return
 	}
 
-	go func() {
-		if err := discoverAndRegisterMCPTools(); err != nil {
-			klog.V(2).Info("MCP tool discovery failed (this is expected if no MCP config exists)", "error", err)
-		}
-	}()
+	// MCP client initialization will be handled via explicit --mcp-client flag
 }
 
 // discoverAndRegisterMCPTools loads MCP configuration, connects to servers, and registers discovered tools
 func discoverAndRegisterMCPTools() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	// Load MCP configuration
@@ -112,6 +108,17 @@ func registerToolsFromConnectedServers(ctx context.Context) error {
 		klog.V(1).Info("Auto-discovered and registered MCP tools", "totalTools", toolCount)
 	}
 
+	return nil
+}
+
+// InitializeMCPClient explicitly initializes MCP client functionality when --mcp-client flag is used
+func InitializeMCPClient() error {
+	klog.V(1).Info("Initializing MCP client functionality")
+	go func() {
+		if err := discoverAndRegisterMCPTools(); err != nil {
+			klog.V(2).Info("MCP tool discovery failed (this is expected if no MCP config exists)", "error", err)
+		}
+	}()
 	return nil
 }
 
