@@ -42,7 +42,7 @@ func init() {
 
 // discoverAndRegisterMCPTools loads MCP configuration, connects to servers, and registers discovered tools
 func discoverAndRegisterMCPTools() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Load MCP configuration

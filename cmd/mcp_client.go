@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/mcp"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
@@ -30,7 +31,6 @@ import (
 // GetMCPServerStatus returns a slice of text blocks with the current MCP server status
 // This function is called to display MCP server information in the UI
 func GetMCPServerStatus() ([]ui.Block, error) {
-
 	var blocks []ui.Block
 
 	// Try to get MCP config path
@@ -43,7 +43,6 @@ func GetMCPServerStatus() ([]ui.Block, error) {
 	// Load the config using the mcp package
 	mcpConfig, err := mcp.LoadConfig(mcpConfigPath)
 	if err != nil {
-
 		return blocks, nil // Don't fail, just return empty blocks
 	}
 
@@ -52,6 +51,24 @@ func GetMCPServerStatus() ([]ui.Block, error) {
 	if totalServers == 0 {
 		blocks = append(blocks, ui.NewAgentTextBlock().WithText("No MCP servers configured."))
 		return blocks, nil
+	}
+
+	// Get the MCP manager to access discovered tools
+	mcpManager := tools.GetMCPManager()
+	var serverTools map[string][]mcp.ToolInfo
+
+	if mcpManager != nil {
+		// Try to get available tools with a short timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		serverTools, err = mcpManager.ListAvailableTools(ctx)
+		if err != nil {
+			klog.V(2).InfoS("Failed to get tools from MCP manager", "error", err)
+			serverTools = make(map[string][]mcp.ToolInfo) // Empty map to avoid nil panics
+		}
+	} else {
+		serverTools = make(map[string][]mcp.ToolInfo) // Empty map
 	}
 
 	// Build a user-friendly summary
@@ -66,22 +83,59 @@ func GetMCPServerStatus() ([]ui.Block, error) {
 			serverNames = append(serverNames, name)
 		}
 	}
+
+	// Count total discovered tools
+	totalTools := 0
+	for _, toolList := range serverTools {
+		totalTools += len(toolList)
+	}
+
 	summary := fmt.Sprintf("Loaded %d MCP server(s): %s", totalServers, strings.Join(serverNames, ", "))
+	if totalTools > 0 {
+		summary += fmt.Sprintf(" (%d tools discovered)", totalTools)
+	}
 	blocks = append(blocks, ui.NewAgentTextBlock().WithText(summary))
 
-	// Show details for each server
+	// Show details for each server with their tools
 	for _, server := range mcpConfig.Servers {
 		serverBlock := ui.NewAgentTextBlock()
-		serverBlock.SetText(fmt.Sprintf("    • %s (%s)", server.Name, server.Command))
+		serverText := fmt.Sprintf("    • %s (%s)", server.Name, server.Command)
+
+		// Add tools information if available
+		if tools, exists := serverTools[server.Name]; exists && len(tools) > 0 {
+			toolNames := make([]string, len(tools))
+			for i, tool := range tools {
+				toolNames[i] = tool.Name
+			}
+			serverText += fmt.Sprintf(" - Tools: %s", strings.Join(toolNames, ", "))
+		} else {
+			serverText += " - No tools discovered"
+		}
+
+		serverBlock.SetText(serverText)
 		blocks = append(blocks, serverBlock)
 	}
+
 	for name, server := range mcpConfig.MCPServers {
 		serverName := name
 		if server.Name != "" {
 			serverName = server.Name
 		}
 		serverBlock := ui.NewAgentTextBlock()
-		serverBlock.SetText(fmt.Sprintf("    • %s (%s) (legacy)", serverName, server.Command))
+		serverText := fmt.Sprintf("    • %s (%s) (legacy)", serverName, server.Command)
+
+		// Add tools information if available
+		if tools, exists := serverTools[serverName]; exists && len(tools) > 0 {
+			toolNames := make([]string, len(tools))
+			for i, tool := range tools {
+				toolNames[i] = tool.Name
+			}
+			serverText += fmt.Sprintf(" - Tools: %s", strings.Join(toolNames, ", "))
+		} else {
+			serverText += " - No tools discovered"
+		}
+
+		serverBlock.SetText(serverText)
 		blocks = append(blocks, serverBlock)
 	}
 
