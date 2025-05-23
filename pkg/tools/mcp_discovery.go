@@ -16,6 +16,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
@@ -36,30 +37,19 @@ func init() {
 	// MCP client initialization will be handled via explicit --mcp-client flag
 }
 
-// discoverAndRegisterMCPTools loads MCP configuration, connects to servers, and registers discovered tools
+// discoverAndRegisterMCPTools connects to servers and registers discovered tools
+// Assumes mcpManager is already created
 func discoverAndRegisterMCPTools() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	// Load MCP configuration
-	config, err := mcp.LoadConfig("")
-	if err != nil {
-		return err
+	if mcpManager == nil {
+		return fmt.Errorf("MCP manager not initialized")
 	}
-
-	// If no servers configured, nothing to do
-	totalServers := len(config.Servers) + len(config.MCPServers)
-	if totalServers == 0 {
-		klog.V(2).Info("No MCP servers configured for auto-discovery")
-		return nil
-	}
-
-	// Create MCP manager
-	mcpManager = mcp.NewManager(config)
 
 	// Connect to all configured servers with retries
-	klog.V(1).InfoS("Connecting to MCP servers", "totalServers", totalServers)
-	if err := mcpManager.ConnectAll(ctx); err != nil {
+	klog.V(1).Info("Connecting to MCP servers")
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer connectCancel()
+
+	if err := mcpManager.ConnectAll(connectCtx); err != nil {
 		klog.V(2).Info("Failed to connect to some MCP servers during auto-discovery", "error", err)
 		// Continue with partial connections
 	}
@@ -68,7 +58,10 @@ func discoverAndRegisterMCPTools() error {
 	time.Sleep(2 * time.Second)
 
 	// Discover and register tools from connected servers
-	return registerToolsFromConnectedServers(ctx)
+	toolsCtx, toolsCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer toolsCancel()
+
+	return registerToolsFromConnectedServers(toolsCtx)
 }
 
 // registerToolsFromConnectedServers discovers tools from all connected MCP servers and registers them
@@ -140,11 +133,22 @@ func registerToolsFromConnectedServers(ctx context.Context) error {
 func InitializeMCPClient() error {
 	klog.V(1).Info("Initializing MCP client functionality")
 
-	// Initialize synchronously to ensure manager is ready before UI queries it
-	if err := discoverAndRegisterMCPTools(); err != nil {
-		klog.V(2).Info("MCP tool discovery failed (this is expected if no MCP config exists)", "error", err)
+	// Create the MCP manager first so UI can access it immediately
+	config, err := mcp.LoadConfig("")
+	if err != nil {
+		klog.V(2).Info("Failed to load MCP config", "error", err)
 		return err
 	}
+
+	// Create MCP manager immediately for UI access
+	mcpManager = mcp.NewManager(config)
+
+	// Start connection and tool discovery asynchronously to avoid blocking UI
+	go func() {
+		if err := discoverAndRegisterMCPTools(); err != nil {
+			klog.V(2).Info("MCP tool discovery failed (this is expected if no MCP config exists)", "error", err)
+		}
+	}()
 
 	return nil
 }

@@ -73,20 +73,39 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("expanding command path: %w", err)
 	}
 
-	// Prepare full command arguments (command + args)
-	cmdArgs := append([]string{expandedCmd}, c.Args...)
+	// Build proper environment slice by merging process environment with custom env
+	processEnv := os.Environ()
+	envMap := make(map[string]string)
+	for _, e := range processEnv {
+		parts := strings.SplitN(e, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+	// Override with custom environment variables
+	for _, env := range c.Env {
+		parts := strings.SplitN(env, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+	finalEnv := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		finalEnv = append(finalEnv, fmt.Sprintf("%s=%s", k, v))
+	}
 
-	// Create the MCP client - this will automatically start the server process
-	// IMPORTANT: NewStdioMCPClient handles starting the server process internally
-	client, err := mcpclient.NewStdioMCPClient(expandedCmd, cmdArgs, c.Env...)
+	// Create the MCP client with proper environment
+	client, err := mcpclient.NewStdioMCPClient(expandedCmd, finalEnv, c.Args...)
 	if err != nil {
 		return fmt.Errorf("creating MCP client: %w", err)
 	}
 
 	c.client = client
 
-	// Initialize the client - this is required before making any requests
-	// as per the mcp-go library documentation
+	// Initialize the client with proper timeout - this is required before making any requests
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer initCancel()
+
 	initReq := mcp.InitializeRequest{
 		Request: mcp.Request{
 			Method: "initialize",
@@ -105,35 +124,40 @@ func (c *Client) Connect(ctx context.Context) error {
 		},
 	}
 
-	_, err = c.client.Initialize(ctx, initReq)
+	_, err = c.client.Initialize(initCtx, initReq)
 	if err != nil {
 		_ = c.client.Close() // Clean up on error
 		c.client = nil
 		return fmt.Errorf("initializing MCP client: %w", err)
 	}
 
-	// Verify the connection by listing tools with retries
-	verifyCtx, verifyCancel := context.WithTimeout(ctx, 5*time.Second)
+	// Verify the connection by listing tools with improved retry logic
+	verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer verifyCancel()
 
-	// Retry tool listing a few times as the server might need time to initialize
-	var lastErr error
-	for i := 0; i < 3; i++ {
-		if i > 0 {
-			time.Sleep(200 * time.Millisecond) // Wait between retries
-		}
+	_, lastErr := c.ListTools(verifyCtx)
+	if lastErr != nil {
+		klog.V(2).InfoS("First ListTools attempt failed, trying ping and retry", "server", c.Name, "error", lastErr)
 
-		_, lastErr = c.ListTools(verifyCtx)
-		if lastErr == nil {
-			break // Success!
-		}
+		// Try ping to check if server is responsive
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if pingErr := c.client.Ping(pingCtx); pingErr != nil {
+			pingCancel()
+			klog.V(2).InfoS("Ping also failed", "server", c.Name, "error", pingErr)
+		} else {
+			pingCancel()
+			klog.V(2).InfoS("Ping succeeded, retrying ListTools", "server", c.Name)
 
-		klog.V(2).InfoS("MCP tool listing attempt failed, retrying", "server", c.Name, "attempt", i+1, "error", lastErr)
+			// Retry ListTools after successful ping
+			retryCtx, retryCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_, lastErr = c.ListTools(retryCtx)
+			retryCancel()
+		}
 	}
 
 	if lastErr != nil {
 		_ = c.Close() // Clean up on error
-		return fmt.Errorf("verifying MCP connection after 3 attempts: %w", lastErr)
+		return fmt.Errorf("verifying MCP connection with ping retry: %w", lastErr)
 	}
 
 	klog.V(2).Info("Successfully connected to MCP server", "name", c.Name)
