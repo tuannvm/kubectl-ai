@@ -38,7 +38,7 @@ func init() {
 
 // discoverAndRegisterMCPTools loads MCP configuration, connects to servers, and registers discovered tools
 func discoverAndRegisterMCPTools() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	// Load MCP configuration
@@ -48,7 +48,8 @@ func discoverAndRegisterMCPTools() error {
 	}
 
 	// If no servers configured, nothing to do
-	if len(config.Servers) == 0 {
+	totalServers := len(config.Servers) + len(config.MCPServers)
+	if totalServers == 0 {
 		klog.V(2).Info("No MCP servers configured for auto-discovery")
 		return nil
 	}
@@ -56,11 +57,15 @@ func discoverAndRegisterMCPTools() error {
 	// Create MCP manager
 	mcpManager = mcp.NewManager(config)
 
-	// Connect to all configured servers
+	// Connect to all configured servers with retries
+	klog.V(1).InfoS("Connecting to MCP servers", "totalServers", totalServers)
 	if err := mcpManager.ConnectAll(ctx); err != nil {
 		klog.V(2).Info("Failed to connect to some MCP servers during auto-discovery", "error", err)
 		// Continue with partial connections
 	}
+
+	// Give servers a moment to stabilize before discovering tools
+	time.Sleep(2 * time.Second)
 
 	// Discover and register tools from connected servers
 	return registerToolsFromConnectedServers(ctx)
@@ -72,15 +77,33 @@ func registerToolsFromConnectedServers(ctx context.Context) error {
 		return nil
 	}
 
-	// Get list of available tools from all connected servers
-	serverTools, err := mcpManager.ListAvailableTools(ctx)
+	// Try to get list of available tools with retry logic
+	var serverTools map[string][]mcp.ToolInfo
+	var err error
+
+	maxRetries := 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		klog.V(2).InfoS("Attempting to discover tools from MCP servers", "attempt", attempt, "maxRetries", maxRetries)
+
+		serverTools, err = mcpManager.ListAvailableTools(ctx)
+		if err == nil {
+			break
+		}
+
+		if attempt < maxRetries {
+			klog.V(3).InfoS("Tool discovery failed, retrying", "attempt", attempt, "error", err)
+			time.Sleep(time.Duration(attempt) * time.Second) // Progressive backoff
+		}
+	}
+
 	if err != nil {
+		klog.Warningf("Failed to discover tools after %d attempts: %v", maxRetries, err)
 		return err
 	}
 
 	toolCount := 0
 	for serverName, tools := range serverTools {
-		klog.V(2).Info("Discovering tools from MCP server", "server", serverName, "toolCount", len(tools))
+		klog.V(1).Info("Discovering tools from MCP server", "server", serverName, "toolCount", len(tools))
 
 		for _, toolInfo := range tools {
 			// Create schema for the tool
@@ -89,7 +112,7 @@ func registerToolsFromConnectedServers(ctx context.Context) error {
 				Description: toolInfo.Description,
 			})
 			if err != nil {
-				klog.Errorf("Failed to convert schema for tool %s from server %s: %v", toolInfo.Name, serverName, err)
+				klog.Warningf("Failed to convert schema for tool %s from server %s: %v", toolInfo.Name, serverName, err)
 				continue
 			}
 
@@ -99,13 +122,15 @@ func registerToolsFromConnectedServers(ctx context.Context) error {
 			// Register with the tools system
 			RegisterTool(mcpTool)
 
-			klog.V(2).Info("Registered MCP tool", "tool", toolInfo.Name, "server", serverName)
+			klog.V(1).Info("Registered MCP tool", "tool", toolInfo.Name, "server", serverName)
 			toolCount++
 		}
 	}
 
 	if toolCount > 0 {
-		klog.V(1).Info("Auto-discovered and registered MCP tools", "totalTools", toolCount)
+		klog.InfoS("Successfully discovered and registered MCP tools", "totalTools", toolCount)
+	} else {
+		klog.V(1).Info("No MCP tools were discovered from connected servers")
 	}
 
 	return nil
@@ -114,11 +139,13 @@ func registerToolsFromConnectedServers(ctx context.Context) error {
 // InitializeMCPClient explicitly initializes MCP client functionality when --mcp-client flag is used
 func InitializeMCPClient() error {
 	klog.V(1).Info("Initializing MCP client functionality")
-	go func() {
-		if err := discoverAndRegisterMCPTools(); err != nil {
-			klog.V(2).Info("MCP tool discovery failed (this is expected if no MCP config exists)", "error", err)
-		}
-	}()
+
+	// Initialize synchronously to ensure manager is ready before UI queries it
+	if err := discoverAndRegisterMCPTools(); err != nil {
+		klog.V(2).Info("MCP tool discovery failed (this is expected if no MCP config exists)", "error", err)
+		return err
+	}
+
 	return nil
 }
 
