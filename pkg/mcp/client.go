@@ -40,8 +40,9 @@ type Client struct {
 	Env []string
 	// client is the underlying MCP client
 	client *mcpclient.Client
-	// cmd is the command being executed for stdio-based MCP servers
-	cmd *exec.Cmd
+	// initialized tracks if the client has been successfully initialized
+	initialized bool
+	// Note: cmd field removed since NewStdioMCPClient handles the server process automatically
 }
 
 // NewClient creates a new MCP client with the given configuration
@@ -61,11 +62,11 @@ func NewClient(name, command string, args []string, env map[string]string) *Clie
 }
 
 // Connect establishes a connection to the MCP server
-// It starts the MCP server process and connects to it via stdio
+// It creates an MCP client that will start the server process automatically
 func (c *Client) Connect(ctx context.Context) error {
 	klog.V(2).InfoS("Connecting to MCP server", "name", c.Name, "command", c.Command, "args", c.Args)
-	if c.client != nil {
-		return nil // Already connected
+	if c.client != nil && c.initialized {
+		return nil // Already connected and initialized
 	}
 
 	// Expand the command path to handle ~ and environment variables
@@ -74,37 +75,75 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("expanding command path: %w", err)
 	}
 
-	// Set up the command
-	cmd := exec.Command(expandedCmd, c.Args...)
-	cmd.Env = append(os.Environ(), c.Env...)
-	cmd.Stderr = os.Stderr // Redirect stderr for better error messages
+	// Build environment slice properly (similar to reference implementation)
+	processEnv := os.Environ()
+	envMap := make(map[string]string)
+	for _, e := range processEnv {
+		parts := strings.SplitN(e, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
 
-	// Create a new MCP client
-	client, err := mcpclient.NewStdioMCPClient(cmd.Path, cmd.Args, cmd.Env...)
+	// Add custom environment variables
+	for _, envVar := range c.Env {
+		parts := strings.SplitN(envVar, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+
+	finalEnv := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		finalEnv = append(finalEnv, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	// Create the MCP client - this will automatically start the server process
+	// IMPORTANT: NewStdioMCPClient handles starting the server process internally
+	client, err := mcpclient.NewStdioMCPClient(expandedCmd, finalEnv, c.Args...)
 	if err != nil {
 		return fmt.Errorf("creating MCP client: %w", err)
 	}
 
-	// Start the command
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting MCP server: %w", err)
-	}
-
-	// Store the command so we can wait for it to finish
-	c.cmd = cmd
 	c.client = client
 
-	// Verify the connection by listing tools with a timeout
-	verifyCtx, verifyCancel := context.WithTimeout(ctx, 5*time.Second)
-	defer verifyCancel()
-
-	_, err = c.ListTools(verifyCtx)
+	// Initialize the client - this is required before making any requests
+	// as per the mcp-go library documentation
+	err = c.initialize(ctx)
 	if err != nil {
-		_ = c.Close() // Clean up on error
-		return fmt.Errorf("verifying MCP connection: %w", err)
+		_ = c.client.Close() // Clean up on error
+		c.client = nil
+		return fmt.Errorf("initializing MCP client: %w", err)
 	}
 
 	klog.V(2).Info("Successfully connected to MCP server", "name", c.Name)
+	return nil
+}
+
+// initialize performs the MCP initialization handshake
+func (c *Client) initialize(ctx context.Context) error {
+	if c.initialized {
+		klog.V(2).InfoS("Client already initialized", "server", c.Name)
+		return nil
+	}
+
+	klog.V(2).InfoS("Initializing MCP client", "server", c.Name)
+
+	initReq := mcp.InitializeRequest{}
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.Capabilities = mcp.ClientCapabilities{}
+	initReq.Params.ClientInfo = mcp.Implementation{
+		Name:    "kubectl-ai-mcp-client",
+		Version: "1.0.0",
+	}
+
+	_, err := c.client.Initialize(ctx, initReq)
+	if err != nil {
+		return fmt.Errorf("MCP initialize call failed: %w", err)
+	}
+
+	c.initialized = true
+	klog.V(2).InfoS("MCP client initialized successfully", "server", c.Name)
 	return nil
 }
 
@@ -118,13 +157,8 @@ func (c *Client) Close() error {
 		c.client = nil
 	}
 
-	// Wait for the command to finish if it's still running
-	if c.cmd != nil {
-		if cmdErr := c.cmd.Wait(); cmdErr != nil && err == nil {
-			err = fmt.Errorf("waiting for MCP server to exit: %w", cmdErr)
-		}
-		c.cmd = nil
-	}
+	// Note: cmd is no longer managed manually since NewStdioMCPClient
+	// handles the server process lifecycle automatically
 
 	return err
 }
@@ -135,10 +169,43 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 		return nil, fmt.Errorf("not connected to MCP server")
 	}
 
-	// Call the ListTools method on the MCP server
-	result, err := c.client.ListTools(ctx, mcp.ListToolsRequest{})
+	// Ensure the client is initialized before making any tool calls
+	if !c.initialized {
+		klog.V(2).InfoS("Client not initialized, attempting to initialize", "server", c.Name)
+		if err := c.initialize(ctx); err != nil {
+			return nil, fmt.Errorf("MCP client not initialized before listing tools: %w", err)
+		}
+	}
+
+	klog.V(2).InfoS("Listing tools from MCP server", "server", c.Name)
+
+	req := mcp.ListToolsRequest{}
+	result, err := c.client.ListTools(ctx, req)
+
+	// Simple retry logic if first attempt fails (from reference implementation)
 	if err != nil {
-		return nil, fmt.Errorf("listing tools: %w", err)
+		klog.V(2).InfoS("First ListTools attempt failed, trying ping and retry", "server", c.Name, "error", err)
+
+		// Try ping with a shorter timeout
+		pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
+		if pingErr := c.client.Ping(pingCtx); pingErr != nil {
+			pingCancel()
+			klog.V(2).InfoS("Ping also failed", "server", c.Name, "error", pingErr)
+			return nil, fmt.Errorf("listing tools failed and ping failed: %w", err)
+		} else {
+			pingCancel()
+			klog.V(2).InfoS("Ping succeeded, retrying ListTools", "server", c.Name)
+			result, err = c.client.ListTools(ctx, req) // Retry the call
+		}
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("listing tools failed even after retry: %w", err)
+	}
+
+	if result == nil {
+		klog.V(2).InfoS("ListTools returned nil result", "server", c.Name)
+		return []Tool{}, nil
 	}
 
 	// Convert the result to our simplified Tool type
@@ -148,9 +215,10 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 			Name:        tool.Name,
 			Description: tool.Description,
 		})
+		klog.V(2).InfoS("Discovered tool", "name", tool.Name, "description", tool.Description, "server", c.Name)
 	}
 
-	klog.V(2).InfoS("Listed tools from MCP server", "count", len(tools), "server", c.Name)
+	klog.V(2).InfoS("Tool discovery completed", "server", c.Name, "tools", len(tools))
 	return tools, nil
 }
 

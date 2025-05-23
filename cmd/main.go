@@ -310,6 +310,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		if err = StartMCPServer(ctx, opt); err != nil {
 			return fmt.Errorf("failed to start MCP server: %w", err)
 		}
+		return nil // MCP server mode blocks, so we return here
 	}
 
 	if err := handleCustomTools(opt.ToolConfigPaths); err != nil {
