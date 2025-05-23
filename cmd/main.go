@@ -307,7 +307,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	}
 
 	if opt.MCPServer {
-		if err = startMCPServer(ctx, opt); err != nil {
+		if err = StartMCPServer(ctx, opt); err != nil {
 			return fmt.Errorf("failed to start MCP server: %w", err)
 		}
 	}
@@ -359,6 +359,14 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	}
 
 	doc := ui.NewDocument()
+
+	// Show MCP server status in the welcome message
+	if mcpBlocks, err := GetMCPServerStatus(); err == nil && len(mcpBlocks) > 0 {
+		doc.AddBlock(ui.NewAgentTextBlock().WithText("\nMCP Server Status:"))
+		for _, block := range mcpBlocks {
+			doc.AddBlock(block)
+		}
+	}
 
 	var userInterface ui.UI
 	switch opt.UserInterface {
@@ -428,7 +436,15 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		return chatSession.answerQuery(ctx, queryFromCmd)
 	}
 
-	return chatSession.repl(ctx, queryFromCmd)
+	// Prepare MCP blocks for startup
+	var mcpBlocks []ui.Block
+	if blocks, err := GetMCPServerStatus(); err == nil && len(blocks) > 0 {
+		header := ui.NewAgentTextBlock().WithText("\nMCP Server Status:")
+		mcpBlocks = append(mcpBlocks, header)
+		mcpBlocks = append(mcpBlocks, blocks...)
+	}
+
+	return chatSession.repl(ctx, queryFromCmd, mcpBlocks)
 }
 
 func handleCustomTools(toolConfigPaths []string) error {
@@ -481,7 +497,10 @@ type session struct {
 }
 
 // repl is a read-eval-print loop for the chat session.
-func (s *session) repl(ctx context.Context, initialQuery string) error {
+func (s *session) repl(ctx context.Context, initialQuery string, initialBlocks []ui.Block) error {
+	for _, block := range initialBlocks {
+		s.doc.AddBlock(block)
+	}
 	query := initialQuery
 	if query == "" {
 		s.doc.AddBlock(ui.NewAgentTextBlock().WithText("Hey there, what can I help you with today?"))
@@ -675,16 +694,4 @@ func resolveKubeConfigPath(opt *Options) error {
 	}
 
 	return nil
-}
-
-func startMCPServer(ctx context.Context, opt Options) error {
-	workDir := filepath.Join(os.TempDir(), "kubectl-ai-mcp")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		return fmt.Errorf("error creating work directory: %w", err)
-	}
-	mcpServer, err := newKubectlMCPServer(ctx, opt.KubeConfigPath, tools.Default(), workDir)
-	if err != nil {
-		return fmt.Errorf("creating mcp server: %w", err)
-	}
-	return mcpServer.Serve(ctx)
 }
