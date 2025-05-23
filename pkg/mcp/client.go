@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 package mcp
 
 import (
@@ -22,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	mcp "github.com/mark3labs/mcp-go/mcp"
@@ -94,8 +94,11 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.cmd = cmd
 	c.client = client
 
-	// Verify the connection by listing tools
-	_, err = c.ListTools(ctx)
+	// Verify the connection by listing tools with a timeout
+	verifyCtx, verifyCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer verifyCancel()
+
+	_, err = c.ListTools(verifyCtx)
 	if err != nil {
 		_ = c.Close() // Clean up on error
 		return fmt.Errorf("verifying MCP connection: %w", err)
@@ -221,6 +224,7 @@ type Tool struct {
 }
 
 // expandPath expands the command path, handling ~ and environment variables
+// If the path is just a binary name (no path separators), it looks in $PATH
 func expandPath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path cannot be empty")
@@ -228,6 +232,22 @@ func expandPath(path string) (string, error) {
 
 	// Expand environment variables first
 	expanded := os.ExpandEnv(path)
+
+	// If the command contains no path separators, look it up in $PATH first
+	if !strings.Contains(expanded, string(filepath.Separator)) && !strings.HasPrefix(expanded, "~") {
+		klog.V(2).InfoS("Attempting PATH lookup for command", "command", expanded)
+		// Try to find the command in $PATH
+		if pathResolved, err := exec.LookPath(expanded); err == nil {
+			klog.V(2).InfoS("Found command in PATH", "command", expanded, "resolved", pathResolved)
+			return pathResolved, nil
+		} else {
+			klog.V(2).InfoS("Command not found in PATH", "command", expanded, "error", err)
+		}
+		// If not found in PATH, continue with the original logic below
+		klog.V(2).InfoS("Command not found in PATH, trying relative to current directory", "command", expanded)
+	} else {
+		klog.V(2).InfoS("Skipping PATH lookup", "command", expanded, "hasPathSeparator", strings.Contains(expanded, string(filepath.Separator)), "hasTilde", strings.HasPrefix(expanded, "~"))
+	}
 
 	// Handle ~ for home directory
 	if strings.HasPrefix(expanded, "~") {
