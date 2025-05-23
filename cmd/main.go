@@ -88,6 +88,7 @@ type Options struct {
 	// It requires a query to be provided as a positional argument.
 	Quiet                  bool     `json:"quiet,omitempty"`
 	MCPServer              bool     `json:"mcpServer,omitempty"`
+	MCPClient              bool     `json:"mcpClient,omitempty"`
 	MaxIterations          int      `json:"maxIterations,omitempty"`
 	KubeConfigPath         string   `json:"kubeConfigPath,omitempty"`
 	PromptTemplateFilePath string   `json:"promptTemplateFilePath,omitempty"`
@@ -135,6 +136,7 @@ func (o *Options) InitDefaults() {
 	// by default, confirm before executing kubectl commands that modify resources in the cluster.
 	o.SkipPermissions = false
 	o.MCPServer = false
+	o.MCPClient = false
 	// We now default to our strongest model (gemini-2.5-pro-exp-03-25) which supports tool use natively.
 	// so we don't need shim.
 	o.EnableToolUseShim = false
@@ -280,6 +282,7 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 	f.StringVar(&opt.ModelID, "model", opt.ModelID, "language model e.g. gemini-2.0-flash-thinking-exp-01-21, gemini-2.0-flash")
 	f.BoolVar(&opt.SkipPermissions, "skip-permissions", opt.SkipPermissions, "(dangerous) skip asking for confirmation before executing kubectl commands that modify resources")
 	f.BoolVar(&opt.MCPServer, "mcp-server", opt.MCPServer, "run in MCP server mode")
+	f.BoolVar(&opt.MCPClient, "mcp-client", opt.MCPClient, "enable MCP client mode to connect to external MCP servers")
 	f.StringArrayVar(&opt.ToolConfigPath, "custom-tools-config", opt.ToolConfigPath, "path to custom tools config file")
 	f.BoolVar(&opt.EnableToolUseShim, "enable-tool-use-shim", opt.EnableToolUseShim, "enable tool use shim")
 	f.BoolVar(&opt.Quiet, "quiet", opt.Quiet, "run in non-interactive mode, requires a query to be provided as a positional argument")
@@ -303,6 +306,13 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			return fmt.Errorf("failed to start MCP server: %w", err)
 		}
 		return nil // MCP server mode blocks, so we return here
+	}
+
+	// Initialize MCP client if requested
+	if opt.MCPClient {
+		if err := tools.InitializeMCPClient(); err != nil {
+			klog.Warningf("Failed to initialize MCP client: %v", err)
+		}
 	}
 
 	// Load and register custom tools from config files and dirs
@@ -375,11 +385,13 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 
 	doc := ui.NewDocument()
 
-	// Show MCP server status in the welcome message
-	if mcpBlocks, err := GetMCPServerStatus(); err == nil && len(mcpBlocks) > 0 {
-		doc.AddBlock(ui.NewAgentTextBlock().WithText("\nMCP Server Status:"))
-		for _, block := range mcpBlocks {
-			doc.AddBlock(block)
+	// Show MCP server status in the welcome message only when MCP client is enabled
+	if opt.MCPClient {
+		if mcpBlocks, err := GetMCPServerStatusWithClientMode(opt.MCPClient); err == nil && len(mcpBlocks) > 0 {
+			doc.AddBlock(ui.NewAgentTextBlock().WithText("\nMCP Server Status:"))
+			for _, block := range mcpBlocks {
+				doc.AddBlock(block)
+			}
 		}
 	}
 
@@ -451,12 +463,14 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		return chatSession.answerQuery(ctx, queryFromCmd)
 	}
 
-	// Prepare MCP blocks for startup
+	// Prepare MCP blocks for startup only when MCP client is enabled
 	var mcpBlocks []ui.Block
-	if blocks, err := GetMCPServerStatus(); err == nil && len(blocks) > 0 {
-		header := ui.NewAgentTextBlock().WithText("\nMCP Server Status:")
-		mcpBlocks = append(mcpBlocks, header)
-		mcpBlocks = append(mcpBlocks, blocks...)
+	if opt.MCPClient {
+		if blocks, err := GetMCPServerStatusWithClientMode(opt.MCPClient); err == nil && len(blocks) > 0 {
+			header := ui.NewAgentTextBlock().WithText("\nMCP Server Status:")
+			mcpBlocks = append(mcpBlocks, header)
+			mcpBlocks = append(mcpBlocks, blocks...)
+		}
 	}
 
 	return chatSession.repl(ctx, queryFromCmd, mcpBlocks)
