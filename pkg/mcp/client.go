@@ -149,7 +149,7 @@ func (c *Client) Connect(ctx context.Context) error {
 			klog.V(2).InfoS("Ping succeeded, retrying ListTools", "server", c.Name)
 
 			// Retry ListTools after successful ping
-			retryCtx, retryCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			retryCtx, retryCancel := context.WithTimeout(ctx, 10*time.Second)
 			_, lastErr = c.ListTools(retryCtx)
 			retryCancel()
 		}

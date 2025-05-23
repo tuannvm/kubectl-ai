@@ -57,6 +57,9 @@ type Conversation struct {
 
 	EnableToolUseShim bool
 
+	// MCPClientEnabled indicates whether MCP client mode is enabled
+	MCPClientEnabled bool
+
 	// Recorder captures events for diagnostics
 	Recorder journal.Recorder
 
@@ -81,8 +84,9 @@ func (s *Conversation) Init(ctx context.Context, doc *ui.Document) error {
 	log.Info("Created temporary working directory", "workDir", workDir)
 
 	systemPrompt, err := s.generatePrompt(ctx, defaultSystemPromptTemplate, PromptData{
-		Tools:             s.Tools,
-		EnableToolUseShim: s.EnableToolUseShim,
+		Tools:                s.Tools,
+		EnableToolUseShim:    s.EnableToolUseShim,
+		MCPClientEnabledFlag: s.MCPClientEnabled,
 	})
 	if err != nil {
 		return fmt.Errorf("generating system prompt: %w", err)
@@ -397,7 +401,8 @@ type PromptData struct {
 	Query string
 	Tools tools.Tools
 
-	EnableToolUseShim bool
+	EnableToolUseShim    bool
+	MCPClientEnabledFlag bool
 }
 
 func (a *PromptData) ToolsAsJSON() string {
@@ -442,6 +447,11 @@ func (a *PromptData) MCPStatus() string {
 	}
 
 	return fmt.Sprintf("Connected MCP servers:\n%s", strings.Join(status, "\n"))
+}
+
+// MCPClientEnabled returns whether MCP client mode is enabled
+func (a *PromptData) MCPClientEnabled() bool {
+	return a.MCPClientEnabledFlag
 }
 
 type ReActResponse struct {

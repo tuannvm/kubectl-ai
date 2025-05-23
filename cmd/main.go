@@ -429,6 +429,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		RemoveWorkDir:      opt.RemoveWorkDir,
 		SkipPermissions:    opt.SkipPermissions,
 		EnableToolUseShim:  opt.EnableToolUseShim,
+		MCPClientEnabled:   opt.MCPClient,
 	}
 
 	err = conversation.Init(ctx, doc)
