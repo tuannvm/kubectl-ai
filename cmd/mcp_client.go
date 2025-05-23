@@ -59,12 +59,16 @@ func GetMCPServerStatusWithClientMode(mcpClientEnabled bool) ([]ui.Block, error)
 		return blocks, nil
 	}
 
-	// Get the MCP manager to access discovered tools - only when client mode is enabled
+	// Get connection status and tools from MCP manager - only when client mode is enabled
 	var serverTools map[string][]mcp.ToolInfo
+	var connectedClients []*mcp.Client
 
 	if mcpClientEnabled {
 		mcpManager := tools.GetMCPManager()
 		if mcpManager != nil {
+			// Get list of successfully connected clients
+			connectedClients = mcpManager.ListClients()
+
 			// Try to get available tools with a short timeout
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -81,53 +85,82 @@ func GetMCPServerStatusWithClientMode(mcpClientEnabled bool) ([]ui.Block, error)
 		serverTools = make(map[string][]mcp.ToolInfo) // Empty map when client mode disabled
 	}
 
-	// Build a user-friendly summary
-	serverNames := []string{}
-	for _, server := range mcpConfig.Servers {
-		serverNames = append(serverNames, server.Name)
-	}
-	for name, server := range mcpConfig.MCPServers {
-		if server.Name != "" {
-			serverNames = append(serverNames, server.Name)
-		} else {
-			serverNames = append(serverNames, name)
-		}
-	}
-
-	// Count total discovered tools
-	totalTools := 0
-	for _, toolList := range serverTools {
-		totalTools += len(toolList)
-	}
-
-	summary := fmt.Sprintf("Loaded %d MCP server(s): %s", totalServers, strings.Join(serverNames, ", "))
+	// Build connection status summary
 	if mcpClientEnabled {
-		if totalTools > 0 {
-			summary += fmt.Sprintf(" (%d tools discovered)", totalTools)
-		}
-	} else {
-		summary += " (MCP client mode disabled - use --mcp-client to enable)"
-	}
-	blocks = append(blocks, ui.NewAgentTextBlock().WithText(summary))
+		connectedCount := len(connectedClients)
+		failedCount := totalServers - connectedCount
 
-	// Show details for each server with their tools
+		// Count total discovered tools
+		totalTools := 0
+		for _, toolList := range serverTools {
+			totalTools += len(toolList)
+		}
+
+		var summary string
+		if connectedCount == 0 {
+			summary = fmt.Sprintf("Failed to connect to all %d MCP server(s)", totalServers)
+		} else if failedCount == 0 {
+			summary = fmt.Sprintf("Successfully connected to %d MCP server(s)", connectedCount)
+			if totalTools > 0 {
+				summary += fmt.Sprintf(" (%d tools discovered)", totalTools)
+			}
+		} else {
+			summary = fmt.Sprintf("Connected to %d/%d MCP server(s) (%d failed)", connectedCount, totalServers, failedCount)
+			if totalTools > 0 {
+				summary += fmt.Sprintf(" (%d tools discovered)", totalTools)
+			}
+		}
+
+		blocks = append(blocks, ui.NewAgentTextBlock().WithText(summary))
+	} else {
+		// When MCP client mode is disabled, just show what's configured
+		serverNames := []string{}
+		for _, server := range mcpConfig.Servers {
+			serverNames = append(serverNames, server.Name)
+		}
+		for name, server := range mcpConfig.MCPServers {
+			if server.Name != "" {
+				serverNames = append(serverNames, server.Name)
+			} else {
+				serverNames = append(serverNames, name)
+			}
+		}
+
+		summary := fmt.Sprintf("Found %d configured MCP server(s): %s (MCP client mode disabled - use --mcp-client to enable)", totalServers, strings.Join(serverNames, ", "))
+		blocks = append(blocks, ui.NewAgentTextBlock().WithText(summary))
+	}
+
+	// Create a map of connected server names for quick lookup
+	connectedServerNames := make(map[string]bool)
+	if mcpClientEnabled {
+		for _, client := range connectedClients {
+			connectedServerNames[client.Name] = true
+		}
+	}
+
+	// Show details for each server with their connection status and tools
 	for _, server := range mcpConfig.Servers {
 		serverBlock := ui.NewAgentTextBlock()
 		serverText := fmt.Sprintf("    • %s (%s)", server.Name, server.Command)
 
-		// Add tools information if available (only when client mode enabled)
+		// Add connection and tools information
 		if mcpClientEnabled {
-			if tools, exists := serverTools[server.Name]; exists && len(tools) > 0 {
-				toolNames := make([]string, len(tools))
-				for i, tool := range tools {
-					toolNames[i] = tool.Name
+			if connectedServerNames[server.Name] {
+				serverText += " - Connected"
+				if tools, exists := serverTools[server.Name]; exists && len(tools) > 0 {
+					toolNames := make([]string, len(tools))
+					for i, tool := range tools {
+						toolNames[i] = tool.Name
+					}
+					serverText += fmt.Sprintf(", Tools: %s", strings.Join(toolNames, ", "))
+				} else {
+					serverText += ", No tools discovered"
 				}
-				serverText += fmt.Sprintf(" - Tools: %s", strings.Join(toolNames, ", "))
 			} else {
-				serverText += " - No tools discovered"
+				serverText += " - Connection failed"
 			}
 		} else {
-			serverText += " - Tools not loaded (--mcp-client disabled)"
+			serverText += " - Not connected (--mcp-client disabled)"
 		}
 
 		serverBlock.SetText(serverText)
@@ -142,19 +175,24 @@ func GetMCPServerStatusWithClientMode(mcpClientEnabled bool) ([]ui.Block, error)
 		serverBlock := ui.NewAgentTextBlock()
 		serverText := fmt.Sprintf("    • %s (%s) (legacy)", serverName, server.Command)
 
-		// Add tools information if available (only when client mode enabled)
+		// Add connection and tools information
 		if mcpClientEnabled {
-			if tools, exists := serverTools[serverName]; exists && len(tools) > 0 {
-				toolNames := make([]string, len(tools))
-				for i, tool := range tools {
-					toolNames[i] = tool.Name
+			if connectedServerNames[serverName] {
+				serverText += " - Connected"
+				if tools, exists := serverTools[serverName]; exists && len(tools) > 0 {
+					toolNames := make([]string, len(tools))
+					for i, tool := range tools {
+						toolNames[i] = tool.Name
+					}
+					serverText += fmt.Sprintf(", Tools: %s", strings.Join(toolNames, ", "))
+				} else {
+					serverText += ", No tools discovered"
 				}
-				serverText += fmt.Sprintf(" - Tools: %s", strings.Join(toolNames, ", "))
 			} else {
-				serverText += " - No tools discovered"
+				serverText += " - Connection failed"
 			}
 		} else {
-			serverText += " - Tools not loaded (--mcp-client disabled)"
+			serverText += " - Not connected (--mcp-client disabled)"
 		}
 
 		serverBlock.SetText(serverText)
