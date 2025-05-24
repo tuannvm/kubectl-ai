@@ -90,6 +90,20 @@ type ToolCall struct {
 }
 
 func (t *ToolCall) PrettyPrint() string {
+	// Check if this is an MCP tool and format accordingly
+	if mcpTool, ok := t.tool.(*MCPTool); ok {
+		if command, ok := t.arguments["command"]; ok {
+			return fmt.Sprintf("[MCP: %s] %s", mcpTool.serverName, command.(string))
+		}
+		var args []string
+		for k, v := range t.arguments {
+			args = append(args, fmt.Sprintf("%s=%v", k, v))
+		}
+		sort.Strings(args)
+		return fmt.Sprintf("[MCP: %s] %s(%s)", mcpTool.serverName, t.name, strings.Join(args, ", "))
+	}
+
+	// Default formatting for non-MCP tools
 	if command, ok := t.arguments["command"]; ok {
 		return command.(string)
 	}
