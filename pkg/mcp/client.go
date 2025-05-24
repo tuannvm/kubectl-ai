@@ -224,11 +224,6 @@ func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[st
 		args[k] = v
 	}
 
-	// Add the command as an argument if not already present
-	if _, ok := args["command"]; !ok {
-		args["command"] = toolName
-	}
-
 	// Call the tool on the MCP server
 	result, err := c.client.CallTool(ctx, mcp.CallToolRequest{
 		Params: struct {

@@ -24,7 +24,7 @@ import (
 
 // Manager manages multiple MCP client connections
 type Manager struct {
-	config *Config
+	config  *Config
 	clients map[string]*Client
 	mu      sync.RWMutex
 }
