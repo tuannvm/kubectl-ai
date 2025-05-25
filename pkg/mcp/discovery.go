@@ -55,8 +55,8 @@ func (m *Manager) DiscoverAndConnectServers(ctx context.Context) error {
 }
 
 // RefreshToolDiscovery forces a refresh of tool discovery from connected servers
-func (m *Manager) RefreshToolDiscovery(ctx context.Context) (map[string][]ToolInfo, error) {
-	var serverTools map[string][]ToolInfo
+func (m *Manager) RefreshToolDiscovery(ctx context.Context) (map[string][]Tool, error) {
+	var serverTools map[string][]Tool
 
 	// Use the retry utility for tool discovery
 	retryConfig := DefaultRetryConfig("tool discovery from MCP servers")
@@ -74,14 +74,14 @@ func (m *Manager) RefreshToolDiscovery(ctx context.Context) (map[string][]ToolIn
 	// Log discovery results
 	toolCount := 0
 	for serverName, tools := range serverTools {
-		klog.V(1).Info("Discovered tools from MCP server", "server", serverName, "toolCount", len(tools))
+		klog.V(LogLevelBasic).Info("Discovered tools from MCP server", "server", serverName, "toolCount", len(tools))
 		toolCount += len(tools)
 	}
 
 	if toolCount > 0 {
 		klog.InfoS("Successfully discovered MCP tools", "totalTools", toolCount)
 	} else {
-		klog.V(1).Info("No MCP tools were discovered from connected servers")
+		klog.V(LogLevelBasic).Info("No MCP tools were discovered from connected servers")
 	}
 
 	return serverTools, nil

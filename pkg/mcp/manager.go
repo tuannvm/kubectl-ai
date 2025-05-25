@@ -114,11 +114,11 @@ func (m *Manager) ListClients() []*Client {
 }
 
 // ListAvailableTools returns a map of all available tools from all connected MCP servers
-func (m *Manager) ListAvailableTools(ctx context.Context) (map[string][]ToolInfo, error) {
+func (m *Manager) ListAvailableTools(ctx context.Context) (map[string][]Tool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	tools := make(map[string][]ToolInfo)
+	tools := make(map[string][]Tool)
 
 	for name, client := range m.clients {
 		toolList, err := client.ListTools(ctx)
@@ -127,13 +127,9 @@ func (m *Manager) ListAvailableTools(ctx context.Context) (map[string][]ToolInfo
 			continue
 		}
 
-		var serverTools []ToolInfo
+		var serverTools []Tool
 		for _, tool := range toolList {
-			serverTools = append(serverTools, ToolInfo{
-				Name:        tool.Name,
-				Description: tool.Description,
-				Server:      name,
-			})
+			serverTools = append(serverTools, tool.WithServer(name))
 		}
 
 		tools[name] = serverTools
@@ -142,10 +138,6 @@ func (m *Manager) ListAvailableTools(ctx context.Context) (map[string][]ToolInfo
 	return tools, nil
 }
 
-// ToolInfo represents information about an available tool
-// This is a simplified version of the MCP Tool type for display purposes
-type ToolInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Server      string `json:"server"`
-}
+// ToolInfo is an alias for Tool to maintain backward compatibility
+// Deprecated: Use Tool instead
+type ToolInfo = Tool

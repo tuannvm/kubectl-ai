@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	mcp "github.com/mark3labs/mcp-go/mcp"
 	"k8s.io/klog/v2"
 )
 
@@ -122,7 +123,7 @@ func SanitizeServerName(name string) string {
 }
 
 // GroupToolsByServer groups tools by their server name for easier display
-func GroupToolsByServer(tools map[string][]ToolInfo) map[string]int {
+func GroupToolsByServer(tools map[string][]Tool) map[string]int {
 	summary := make(map[string]int)
 
 	for serverName, serverTools := range tools {
@@ -223,4 +224,33 @@ func expandPath(path string) (string, error) {
 	}
 
 	return expanded, nil
+}
+
+// =============================================================================
+// Helper Functions to Reduce Redundancy
+// =============================================================================
+
+// withTimeout creates a context with the specified timeout and returns the context and cancel function
+func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, timeout)
+}
+
+// ensureConnected checks if the client is connected and returns an error if not
+func (c *Client) ensureConnected() error {
+	if c.client == nil {
+		return fmt.Errorf("not connected to MCP server")
+	}
+	return nil
+}
+
+// convertMCPToolsToTools converts MCP library tools to our Tool type
+func convertMCPToolsToTools(mcpTools []mcp.Tool) []Tool {
+	tools := make([]Tool, 0, len(mcpTools))
+	for _, tool := range mcpTools {
+		tools = append(tools, Tool{
+			Name:        tool.Name,
+			Description: tool.Description,
+		})
+	}
+	return tools
 }

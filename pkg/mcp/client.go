@@ -116,7 +116,7 @@ func (c *Client) createMCPClient(command string, env []string) error {
 
 // initializeConnection initializes the MCP connection with proper handshake
 func (c *Client) initializeConnection(ctx context.Context) error {
-	initCtx, initCancel := context.WithTimeout(ctx, DefaultConnectionTimeout)
+	initCtx, initCancel := withTimeout(ctx, DefaultConnectionTimeout)
 	defer initCancel()
 
 	initReq := c.buildInitializeRequest()
@@ -130,7 +130,7 @@ func (c *Client) initializeConnection(ctx context.Context) error {
 
 // verifyConnection verifies the connection works by testing tool listing with retry
 func (c *Client) verifyConnection(ctx context.Context) error {
-	verifyCtx, verifyCancel := context.WithTimeout(ctx, DefaultVerificationTimeout)
+	verifyCtx, verifyCancel := withTimeout(ctx, DefaultVerificationTimeout)
 	defer verifyCancel()
 
 	_, err := c.ListTools(verifyCtx)
@@ -145,7 +145,7 @@ func (c *Client) verifyConnection(ctx context.Context) error {
 // retryConnectionWithPing attempts to ping the server and retry ListTools
 func (c *Client) retryConnectionWithPing(ctx context.Context) error {
 	// Try ping to check if server is responsive
-	pingCtx, pingCancel := context.WithTimeout(ctx, DefaultPingTimeout)
+	pingCtx, pingCancel := withTimeout(ctx, DefaultPingTimeout)
 	defer pingCancel()
 
 	if err := c.client.Ping(pingCtx); err != nil {
@@ -156,7 +156,7 @@ func (c *Client) retryConnectionWithPing(ctx context.Context) error {
 	klog.V(LogLevelInfo).InfoS("Ping succeeded, retrying ListTools", "server", c.Name)
 
 	// Retry ListTools after successful ping
-	retryCtx, retryCancel := context.WithTimeout(ctx, DefaultVerificationTimeout)
+	retryCtx, retryCancel := withTimeout(ctx, DefaultVerificationTimeout)
 	defer retryCancel()
 
 	_, err := c.ListTools(retryCtx)
@@ -214,8 +214,8 @@ func (c *Client) Close() error {
 
 // ListTools lists all available tools from the MCP server
 func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
-	if c.client == nil {
-		return nil, fmt.Errorf("not connected to MCP server")
+	if err := c.ensureConnected(); err != nil {
+		return nil, err
 	}
 
 	// Call the ListTools method on the MCP server
@@ -224,14 +224,8 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 		return nil, fmt.Errorf("listing tools: %w", err)
 	}
 
-	// Convert the result to our simplified Tool type
-	var tools []Tool
-	for _, tool := range result.Tools {
-		tools = append(tools, Tool{
-			Name:        tool.Name,
-			Description: tool.Description,
-		})
-	}
+	// Convert the result using the helper function
+	tools := convertMCPToolsToTools(result.Tools)
 
 	klog.V(2).InfoS("Listed tools from MCP server", "count", len(tools), "server", c.Name)
 	return tools, nil
@@ -241,8 +235,9 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 // The arguments should be a map of parameter names to values that will be passed to the tool
 func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[string]interface{}) (string, error) {
 	klog.V(LogLevelInfo).InfoS("Calling MCP tool", "server", c.Name, "tool", toolName, "args", arguments)
-	if c.client == nil {
-		return "", fmt.Errorf("not connected to MCP server")
+
+	if err := c.ensureConnected(); err != nil {
+		return "", err
 	}
 
 	// Ensure we have a valid context
@@ -295,8 +290,64 @@ func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[st
 	return "Tool executed successfully, but no text content was returned", nil
 }
 
-// Tool represents an MCP tool
+// Tool represents an MCP tool with optional server information
 type Tool struct {
 	Name        string `json:"name"`
-	Description string `json:"description"`
+	Description string `json:"description,omitempty"`
+	Server      string `json:"server,omitempty"`
+}
+
+// NewTool creates a new tool with basic information
+func NewTool(name, description string) Tool {
+	return Tool{
+		Name:        name,
+		Description: description,
+	}
+}
+
+// NewToolWithServer creates a new tool with server information
+func NewToolWithServer(name, description, server string) Tool {
+	return Tool{
+		Name:        name,
+		Description: description,
+		Server:      server,
+	}
+}
+
+// WithServer returns a copy of the tool with server information added
+func (t Tool) WithServer(server string) Tool {
+	return Tool{
+		Name:        t.Name,
+		Description: t.Description,
+		Server:      server,
+	}
+}
+
+// ID returns a unique identifier for the tool
+func (t Tool) ID() string {
+	if t.Server != "" {
+		return fmt.Sprintf("%s/%s", t.Server, t.Name)
+	}
+	return t.Name
+}
+
+// String returns a human-readable representation of the tool
+func (t Tool) String() string {
+	if t.Server != "" {
+		return fmt.Sprintf("%s [%s]: %s", t.Name, t.Server, t.Description)
+	}
+	return fmt.Sprintf("%s: %s", t.Name, t.Description)
+}
+
+// AsBasicTool returns the tool without server information (for client.ListTools compatibility)
+func (t Tool) AsBasicTool() Tool {
+	return Tool{
+		Name:        t.Name,
+		Description: t.Description,
+	}
+}
+
+// IsFromServer checks if the tool belongs to a specific server
+func (t Tool) IsFromServer(server string) bool {
+	return t.Server == server
 }

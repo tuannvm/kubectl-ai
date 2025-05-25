@@ -17,7 +17,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/mcp"
@@ -25,6 +24,32 @@ import (
 )
 
 var mcpManager *mcp.Manager
+
+// =============================================================================
+// Schema Conversion Functions (kubectl-ai specific)
+// =============================================================================
+
+// convertToolToGollm converts an MCP tool to gollm.FunctionDefinition with a simple schema
+func convertToolToGollm(mcpTool *mcp.Tool) (*gollm.FunctionDefinition, error) {
+	return &gollm.FunctionDefinition{
+		Name:        mcpTool.Name,
+		Description: mcpTool.Description,
+		Parameters: &gollm.Schema{
+			Type: gollm.TypeObject,
+			Properties: map[string]*gollm.Schema{
+				"arguments": {
+					Type:        gollm.TypeObject,
+					Description: "Arguments for the MCP tool",
+					Properties:  map[string]*gollm.Schema{},
+				},
+			},
+		},
+	}, nil
+}
+
+// =============================================================================
+// MCP Tool Implementation
+// =============================================================================
 
 // init function is kept minimal - MCP initialization is handled by --mcp-client flag
 func init() {
@@ -145,33 +170,14 @@ func (r *MCPToolResult) String() string {
 		r.ServerName, r.ToolName, status, resultStr)
 }
 
-// formatArgsForDisplay creates a clean display format for arguments
+// formatArgsForDisplay creates a simple display format for arguments
 func formatArgsForDisplay(args map[string]any) string {
-	if len(args) == 0 {
-		return "{}"
-	}
-
-	var parts []string
-	for k, v := range args {
-		valueStr := fmt.Sprintf("%v", v)
-		if len(valueStr) > 50 {
-			valueStr = valueStr[:47] + "..."
-		}
-		parts = append(parts, fmt.Sprintf("%s=%q", k, valueStr))
-	}
-
-	return "{" + strings.Join(parts, ", ") + "}"
+	return fmt.Sprintf("%v", args)
 }
 
 // ShowMCPInvocationMessage displays a message to the user when an MCP tool is invoked
 func ShowMCPInvocationMessage(ctx context.Context, toolName, serverName string) error {
-	msg := fmt.Sprintf("🔧 [MCP:%s] Invoking %s", serverName, toolName)
-
-	// Display message to user via stdout (visible in terminal)
-	fmt.Printf("  %s\n", msg)
-
-	// Enhanced logging with emojis for better visibility
-	klog.V(1).Info(msg)
+	fmt.Printf("🔧 [MCP:%s] Invoking %s\n", serverName, toolName)
 	return nil
 }
 
@@ -196,8 +202,8 @@ func registerToolsFromConnectedServers(ctx context.Context) error {
 		klog.V(1).Info("Registering tools from MCP server", "server", serverName, "toolCount", len(tools))
 
 		for _, toolInfo := range tools {
-			// Create schema for the tool using the new pkg/mcp functions
-			schema, err := mcp.ConvertToolToGollm(&mcp.Tool{
+			// Create schema for the tool using the local kubectl-ai specific functions
+			schema, err := convertToolToGollm(&mcp.Tool{
 				Name:        toolInfo.Name,
 				Description: toolInfo.Description,
 			})
