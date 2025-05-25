@@ -97,9 +97,9 @@ func DefaultConfigPath() (string, error) {
 	// For backward compatibility, check if the old config exists
 	if _, err := os.Stat(oldConfigPath); err == nil {
 		// If the old config exists, move it to the new location
-		if err := os.MkdirAll(filepath.Dir(configPath), 0755); err == nil {
+		if err := os.MkdirAll(filepath.Dir(configPath), ConfigDirPermissions); err == nil {
 			if err := os.Rename(oldConfigPath, configPath); err == nil {
-				klog.V(2).Info("Migrated MCP config to new location", "oldPath", oldConfigPath, "newPath", configPath)
+				klog.V(LogLevelInfo).Info("Migrated MCP config to new location", "oldPath", oldConfigPath, "newPath", configPath)
 			}
 		}
 	}
@@ -121,7 +121,7 @@ func LoadConfig(path string) (*Config, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		// Create the directory if it doesn't exist
 		dir := filepath.Dir(path)
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, ConfigDirPermissions); err != nil {
 			return nil, fmt.Errorf("creating config directory: %w", err)
 		}
 
@@ -136,7 +136,7 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("saving default config: %w", err)
 		}
 
-		klog.V(2).Info("Created default MCP configuration", "path", path)
+		klog.V(LogLevelInfo).Info("Created default MCP configuration", "path", path)
 		return defaultConfig, nil
 	}
 
@@ -153,14 +153,14 @@ func LoadConfig(path string) (*Config, error) {
 
 	// Handle legacy migration if needed
 	if config.NeedsLegacyMigration() {
-		klog.V(2).Info("Migrating MCP config from legacy format", "path", path)
+		klog.V(LogLevelInfo).Info("Migrating MCP config from legacy format", "path", path)
 		config.MigrateFromLegacy()
 
 		// Save the migrated configuration
 		if err := config.Save(path); err != nil {
 			klog.Warningf("Failed to save migrated MCP config: %v", err)
 		} else {
-			klog.V(2).Info("Successfully migrated and saved MCP config")
+			klog.V(LogLevelInfo).Info("Successfully migrated and saved MCP config")
 		}
 	}
 
@@ -183,7 +183,7 @@ func (c *Config) Save(path string) error {
 	}
 
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), ConfigDirPermissions); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 
@@ -194,11 +194,11 @@ func (c *Config) Save(path string) error {
 	}
 
 	// Perform atomic write
-	if err := atomicWriteFile(path, data, 0600); err != nil {
+	if err := atomicWriteFile(path, data, ConfigFilePermissions); err != nil {
 		return fmt.Errorf("writing config file: %w", err)
 	}
 
-	klog.V(2).Info("Saved MCP configuration", "path", path)
+	klog.V(LogLevelInfo).Info("Saved MCP configuration", "path", path)
 	return nil
 }
 

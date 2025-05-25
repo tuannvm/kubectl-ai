@@ -23,11 +23,11 @@ import (
 
 // InitializeManager creates and initializes the MCP manager
 func InitializeManager() (*Manager, error) {
-	klog.V(1).Info("Initializing MCP client functionality")
+	klog.V(LogLevelBasic).Info("Initializing MCP client functionality")
 
 	config, err := LoadConfig("")
 	if err != nil {
-		klog.V(2).Info("Failed to load MCP config", "error", err)
+		klog.V(LogLevelInfo).Info("Failed to load MCP config", "error", err)
 		return nil, err
 	}
 
@@ -39,17 +39,17 @@ func InitializeManager() (*Manager, error) {
 // DiscoverAndConnectServers connects to all configured MCP servers and discovers their tools
 func (m *Manager) DiscoverAndConnectServers(ctx context.Context) error {
 	// Connect to all configured servers with retries
-	klog.V(1).Info("Connecting to MCP servers")
-	connectCtx, connectCancel := context.WithTimeout(ctx, 30*time.Second)
+	klog.V(LogLevelBasic).Info("Connecting to MCP servers")
+	connectCtx, connectCancel := context.WithTimeout(ctx, DefaultConnectionTimeout)
 	defer connectCancel()
 
 	if err := m.ConnectAll(connectCtx); err != nil {
-		klog.V(2).Info("Failed to connect to some MCP servers during auto-discovery", "error", err)
+		klog.V(LogLevelInfo).Info("Failed to connect to some MCP servers during auto-discovery", "error", err)
 		// Continue with partial connections
 	}
 
 	// Give servers a moment to stabilize before discovering tools
-	time.Sleep(2 * time.Second)
+	time.Sleep(DefaultStabilizationDelay)
 
 	return nil
 }

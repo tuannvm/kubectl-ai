@@ -18,6 +18,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -48,14 +52,14 @@ func RetryOperation(ctx context.Context, config RetryConfig, operation func() er
 	var lastErr error
 
 	for attempt := 1; attempt <= config.MaxRetries; attempt++ {
-		klog.V(3).InfoS("Attempting operation",
+		klog.V(LogLevelDebug).InfoS("Attempting operation",
 			"operation", config.Description,
 			"attempt", attempt,
 			"maxRetries", config.MaxRetries)
 
 		if err := operation(); err == nil {
 			if attempt > 1 {
-				klog.V(2).InfoS("Operation succeeded after retry",
+				klog.V(LogLevelInfo).InfoS("Operation succeeded after retry",
 					"operation", config.Description,
 					"attempt", attempt)
 			}
@@ -65,7 +69,7 @@ func RetryOperation(ctx context.Context, config RetryConfig, operation func() er
 
 			if attempt < config.MaxRetries {
 				delay := calculateBackoffDelay(attempt, config)
-				klog.V(3).InfoS("Operation failed, retrying",
+				klog.V(LogLevelDebug).InfoS("Operation failed, retrying",
 					"operation", config.Description,
 					"attempt", attempt,
 					"error", err,
@@ -126,4 +130,97 @@ func GroupToolsByServer(tools map[string][]ToolInfo) map[string]int {
 	}
 
 	return summary
+}
+
+// mergeEnvironmentVariables merges process environment with custom environment variables
+func mergeEnvironmentVariables(processEnv, customEnv []string) []string {
+	envMap := make(map[string]string)
+
+	// Parse process environment
+	for _, e := range processEnv {
+		if parts := strings.SplitN(e, "=", 2); len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+
+	// Override with custom environment variables
+	for _, env := range customEnv {
+		if parts := strings.SplitN(env, "=", 2); len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+
+	// Convert back to slice
+	finalEnv := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		finalEnv = append(finalEnv, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	return finalEnv
+}
+
+// expandPath expands the command path, handling ~ and environment variables
+// If the path is just a binary name (no path separators), it looks in $PATH
+func expandPath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path cannot be empty")
+	}
+
+	// Expand environment variables first
+	expanded := os.ExpandEnv(path)
+
+	// If the command contains no path separators, look it up in $PATH first
+	if !strings.Contains(expanded, string(filepath.Separator)) && !strings.HasPrefix(expanded, "~") {
+		klog.V(LogLevelInfo).InfoS("Attempting PATH lookup for command", "command", expanded)
+		// Try to find the command in $PATH
+		if pathResolved, err := exec.LookPath(expanded); err == nil {
+			klog.V(LogLevelInfo).InfoS("Found command in PATH", "command", expanded, "resolved", pathResolved)
+			return pathResolved, nil
+		} else {
+			klog.V(LogLevelInfo).InfoS("Command not found in PATH", "command", expanded, "error", err)
+		}
+		// If not found in PATH, continue with the original logic below
+		klog.V(LogLevelInfo).InfoS("Command not found in PATH, trying relative to current directory", "command", expanded)
+	} else {
+		klog.V(LogLevelInfo).InfoS("Skipping PATH lookup", "command", expanded, "hasPathSeparator", strings.Contains(expanded, string(filepath.Separator)), "hasTilde", strings.HasPrefix(expanded, "~"))
+	}
+
+	// Handle ~ for home directory
+	if strings.HasPrefix(expanded, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("getting home directory: %w", err)
+		}
+		expanded = filepath.Join(home, expanded[1:])
+	}
+
+	// Clean the path to remove any . or .. elements
+	expanded = filepath.Clean(expanded)
+
+	// Make the path absolute if it's not already
+	if !filepath.IsAbs(expanded) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("getting current working directory: %w", err)
+		}
+		expanded = filepath.Clean(filepath.Join(cwd, expanded))
+	}
+
+	// Verify the file exists and is executable
+	info, err := os.Stat(expanded)
+	if err != nil {
+		return "", fmt.Errorf(ErrPathCheckFmt, expanded, err)
+	}
+
+	// Check if it's a regular file and executable
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("path %q is not a regular file", expanded)
+	}
+
+	// Check if the file is executable by the current user
+	if info.Mode().Perm()&0111 == 0 {
+		return "", fmt.Errorf("file %q is not executable", expanded)
+	}
+
+	return expanded, nil
 }

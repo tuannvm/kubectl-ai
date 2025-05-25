@@ -46,21 +46,21 @@ func (m *Manager) ConnectAll(ctx context.Context) error {
 
 	for _, serverCfg := range m.config.Servers {
 		if _, exists := m.clients[serverCfg.Name]; exists {
-			klog.V(2).Info("MCP client already connected", "name", serverCfg.Name)
+			klog.V(LogLevelInfo).Info("MCP client already connected", "name", serverCfg.Name)
 			continue
 		}
 
 		// Create client with environment variables
 		client := NewClient(serverCfg.Name, serverCfg.Command, serverCfg.Args, serverCfg.Env)
 		if err := client.Connect(ctx); err != nil {
-			err := fmt.Errorf("connecting to MCP server %q: %w", serverCfg.Name, err)
+			err := fmt.Errorf(ErrServerConnectionFmt, serverCfg.Name, err)
 			errs = append(errs, err)
 			klog.Error(err)
 			continue
 		}
 
 		m.clients[serverCfg.Name] = client
-		klog.V(2).Info("Connected to MCP server", "name", serverCfg.Name)
+		klog.V(LogLevelInfo).Info("Connected to MCP server", "name", serverCfg.Name)
 	}
 
 	if len(errs) > 0 {
@@ -79,7 +79,7 @@ func (m *Manager) Close() error {
 
 	for name, client := range m.clients {
 		if err := client.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("closing MCP client %q: %w", name, err))
+			errs = append(errs, fmt.Errorf(ErrServerCloseFmt, name, err))
 		}
 		delete(m.clients, name)
 	}

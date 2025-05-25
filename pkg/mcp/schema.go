@@ -91,7 +91,7 @@ func convertJSONSchemaToGollm(jsonSchema map[string]interface{}) (*gollm.Schema,
 	// Handle type with validation
 	schemaType, err := parseSchemaType(jsonSchema)
 	if err != nil {
-		klog.V(3).InfoS("Schema type parsing failed, using default", "error", err)
+		klog.V(LogLevelDebug).InfoS("Schema type parsing failed, using default", "error", err)
 		schema.Type = gollm.TypeObject // Safe default
 	} else {
 		schema.Type = schemaType
@@ -106,7 +106,7 @@ func convertJSONSchemaToGollm(jsonSchema map[string]interface{}) (*gollm.Schema,
 	if schema.Type == gollm.TypeObject {
 		properties, required, err := parseObjectProperties(jsonSchema)
 		if err != nil {
-			klog.V(3).InfoS("Failed to parse object properties", "error", err)
+			klog.V(LogLevelDebug).InfoS("Failed to parse object properties", "error", err)
 			// Use fallback properties
 			schema.Properties = createFallbackProperties()
 		} else {
@@ -123,7 +123,7 @@ func convertJSONSchemaToGollm(jsonSchema map[string]interface{}) (*gollm.Schema,
 	// Handle array items
 	if schema.Type == gollm.TypeArray {
 		if items, err := parseArrayItems(jsonSchema); err != nil {
-			klog.V(3).InfoS("Failed to parse array items", "error", err)
+			klog.V(LogLevelDebug).InfoS("Failed to parse array items", "error", err)
 		} else {
 			schema.Items = items
 		}
@@ -171,13 +171,13 @@ func parseObjectProperties(jsonSchema map[string]interface{}) (map[string]*gollm
 			if propSchemaMap, ok := propSchema.(map[string]interface{}); ok {
 				convertedProp, err := convertJSONSchemaToGollm(propSchemaMap)
 				if err != nil {
-					klog.V(3).InfoS("Failed to convert property schema", "property", propName, "error", err)
+					klog.V(LogLevelDebug).InfoS("Failed to convert property schema", "property", propName, "error", err)
 					// Continue with other properties instead of failing completely
 					continue
 				}
 				properties[propName] = convertedProp
 			} else {
-				klog.V(3).InfoS("Property schema is not an object", "property", propName, "type", fmt.Sprintf("%T", propSchema))
+				klog.V(LogLevelDebug).InfoS("Property schema is not an object", "property", propName, "type", fmt.Sprintf("%T", propSchema))
 			}
 		}
 	}
@@ -189,7 +189,7 @@ func parseObjectProperties(jsonSchema map[string]interface{}) (map[string]*gollm
 			if reqStr, ok := req.(string); ok {
 				required = append(required, reqStr)
 			} else {
-				klog.V(3).InfoS("Required field is not a string", "field", req, "type", fmt.Sprintf("%T", req))
+				klog.V(LogLevelDebug).InfoS("Required field is not a string", "field", req, "type", fmt.Sprintf("%T", req))
 			}
 		}
 	}
