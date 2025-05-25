@@ -714,3 +714,15 @@ func resolveKubeConfigPath(opt *Options) error {
 
 	return nil
 }
+
+func startMCPServer(ctx context.Context, opt Options) error {
+	workDir := filepath.Join(os.TempDir(), "kubectl-ai-mcp")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		return fmt.Errorf("error creating work directory: %w", err)
+	}
+	mcpServer, err := newKubectlMCPServer(ctx, opt.KubeConfigPath, tools.Default(), workDir)
+	if err != nil {
+		return fmt.Errorf("creating mcp server: %w", err)
+	}
+	return mcpServer.Serve(ctx)
+}
