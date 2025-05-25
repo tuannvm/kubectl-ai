@@ -8,11 +8,12 @@ The MCP client allows `kubectl-ai` to connect to MCP servers, discover available
 
 ## Features
 
-- Connect to multiple MCP servers
+- Connect to multiple MCP servers simultaneously
 - Automatic discovery of available tools from connected servers
-- Execute tools on remote MCP servers
-- Configuration-based server management
-- Support for sequential-thinking server out of the box
+- Execute tools on remote MCP servers with parameter conversion
+- Configuration-based server management with both new and legacy formats
+- Generic parameter name and type conversion (snake_case → camelCase, intelligent type inference)
+- Synchronous initialization ensuring tools are available before conversation starts
 
 ## Configuration
 
@@ -20,32 +21,49 @@ MCP server configurations are stored in `~/.config/kubectl-ai/mcp.json`. If this
 
 ### Default Configuration
 
-By default, the MCP client is configured to use a sequential-thinking server with the following settings:
+By default, the MCP client is configured with sequential thinking MCP server:
 
 ```json
 {
-  "mcpServers": {
-    "sequential-thinking": {
+  "servers": [
+    {
+      "name": "sequential-thinking",
       "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-sequential-thinking"
-      ]
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     }
-  }
+  ]
 }
 ```
 
 ### Configuration Format
 
-The configuration file uses the following JSON structure:
+The configuration file supports two formats:
+
+#### New Format (Recommended)
+
+```json
+{
+  "servers": [
+    {
+      "name": "server-name",
+      "command": "path-to-server-binary", 
+      "args": ["--flag1", "value1"],
+      "env": {
+        "ENV_VAR": "value"
+      }
+    }
+  ]
+}
+```
+
+#### Legacy Format (Still Supported)
 
 ```json
 {
   "mcpServers": {
     "server-name": {
       "command": "path-to-server-binary",
-      "args": ["--flag1", "value1"],
+      "args": ["--flag1", "value1"], 
       "env": {
         "ENV_VAR": "value"
       }
@@ -54,25 +72,38 @@ The configuration file uses the following JSON structure:
 }
 ```
 
+Both formats can be used simultaneously in the same configuration file.
+
 ## Usage
 
-MCP servers are automatically discovered and used by the AI when needed. No manual interaction is required.
+Enable MCP client functionality with the `--mcp-client` flag:
+
+```bash
+kubectl-ai --mcp-client
+```
+
+MCP servers are automatically discovered and their tools made available to the AI. The system handles:
+
+- **Parameter conversion**: Automatically converts snake_case parameters to camelCase
+- **Type inference**: Intelligently converts string parameters to numbers/booleans based on naming patterns
+- **Error handling**: Graceful fallbacks for connection issues
 
 ### Custom Server Example
 
-To add a custom MCP server, edit the configuration file at `~/.config/kubectl-ai/mcp.json` and add a new server entry:
+To add a custom MCP server, edit the configuration file at `~/.config/kubectl-ai/mcp.json`:
 
 ```json
 {
-  "mcpServers": {
-    "custom-server": {
-      "command": "/path/to/your/mcp-server",
+  "servers": [
+    {
+      "name": "custom-server",
+      "command": "/path/to/your/mcp-server", 
       "args": ["--port", "8080"],
       "env": {
         "CUSTOM_VAR": "value"
       }
     }
-  }
+  ]
 }
 ```
 
@@ -82,6 +113,25 @@ You can configure the following environment variables to customize MCP client be
 
 - `KUBECTL_AI_MCP_CONFIG`: Override the default configuration file path
 - `MCP_<SERVER_NAME>_<ENV_VAR>`: Set environment variables for specific servers
+
+## Parameter Conversion
+
+The MCP client automatically handles parameter name and type conversion to ensure compatibility with different MCP servers:
+
+### Name Conversion
+- Converts snake_case parameter names to camelCase
+- Example: `thought_number` → `thoughtNumber`
+
+### Type Conversion
+Parameters are intelligently converted based on naming patterns:
+
+**Numbers:** Parameters containing `number`, `count`, `total`, `max`, `min`, `limit`
+**Booleans:** Parameters starting with `is`, `has`, `needs`, `enable` or containing `required`, `enabled`
+
+### Fallback Behavior
+- If type conversion fails, the original value is preserved
+- Unknown servers use generic conversion rules
+- No configuration required - works automatically with any MCP server
 
 ## Implementation Details
 
@@ -106,12 +156,14 @@ The `Config` struct handles loading and saving MCP server configurations from di
 
 ## Integration with kubectl-ai
 
-The MCP client is integrated with `kubectl-ai` to automatically discover and use tools from configured MCP servers. The system will:
+The MCP client is integrated with `kubectl-ai` to automatically discover and use tools from configured MCP servers. The system:
 
-1. Load the MCP configuration on startup
-2. Connect to all configured MCP servers
-3. Make their tools available to the AI as needed
-4. Automatically handle tool execution and result processing
+1. **Loads configuration** from `~/.config/kubectl-ai/mcp.json` on startup
+2. **Connects synchronously** to all configured MCP servers (when `--mcp-client` flag is used)
+3. **Registers tools** before the conversation starts, ensuring they're immediately available
+4. **Converts parameters** automatically using generic snake_case → camelCase conversion
+5. **Handles execution** with proper error handling and result formatting
+6. **Displays status** showing connected servers and available tool counts
 
 ## Security Considerations
 
@@ -122,7 +174,26 @@ The MCP client is integrated with `kubectl-ai` to automatically discover and use
 
 ## Troubleshooting
 
-- Use `-v=4` for debug logging to see MCP connection details
-- Check the MCP server logs for connection issues
-- Verify the MCP server is running and accessible
-- Ensure the command path and arguments in the configuration are correct
+### Common Issues
+
+**No MCP tools available:**
+- Ensure you're using the `--mcp-client` flag
+- Check that `~/.config/kubectl-ai/mcp.json` exists and is valid
+- Verify MCP servers are installed (e.g., `npx` commands work)
+
+**Connection failures:**
+- Check network connectivity for remote servers
+- Ensure server commands and paths are correct in configuration
+- Verify environment variables are properly set
+
+**Parameter conversion issues:**
+- The system automatically converts snake_case → camelCase
+- String parameters are converted to numbers/booleans based on naming patterns
+- Fallback behavior preserves original values if conversion fails
+
+### Debug Information
+
+- Use `-v=1` for basic MCP operation logging
+- Use `-v=2` for detailed connection and tool discovery info  
+- Check server status in the startup message
+- Tool counts are displayed for each connected server

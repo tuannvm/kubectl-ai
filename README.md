@@ -201,6 +201,51 @@ A custom tool definition for `helm` could look like the following example:
     Use `helm --help` or `helm <subcommand> --help` to see full syntax, available flags, and examples for each command.
 ```
 
+## MCP Client Mode
+
+`kubectl-ai` can act as an MCP (Model Context Protocol) client, connecting to external MCP servers to access additional tools and capabilities beyond the built-in ones.
+
+### Quick Start
+
+Enable MCP client mode:
+
+```bash
+kubectl-ai --mcp-client
+```
+
+By default, `kubectl-ai` comes pre-configured with useful MCP server:
+- **sequential-thinking**: Advanced reasoning and step-by-step analysis
+
+### Configuration
+
+Create or edit `~/.config/kubectl-ai/mcp.json` to customize MCP servers:
+
+```json
+{
+  "servers": [
+    {
+      "name": "sequential-thinking",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    {
+      "name": "custom-server",
+      "command": "/path/to/your/mcp-server",
+      "args": ["--arg1", "value1"]
+    }
+  ]
+}
+```
+
+The system automatically:
+- Converts parameter names (snake_case → camelCase)
+- Handles type conversion (strings → numbers/booleans when appropriate)
+- Provides fallback behavior for unknown servers
+
+No additional setup required - just use the `--mcp-client` flag and the AI will have access to all configured MCP tools.
+
+📖 **For detailed configuration options, troubleshooting, and advanced features, see the [MCP Documentation](pkg/mcp/README.md).**
+
 ## Extras
 
 You can use the following special keywords for specific actions:
