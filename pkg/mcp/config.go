@@ -151,27 +151,28 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
 
-	// Convert mcpServers map to Servers slice if needed (legacy support)
-	if len(config.MCPServers) > 0 && len(config.Servers) == 0 {
-		for name, serverCfg := range config.MCPServers {
-			// Set the name from the map key if not already set
-			if serverCfg.Name == "" {
-				serverCfg.Name = name
-			}
-			config.Servers = append(config.Servers, serverCfg)
-		}
-		
-		// Save the converted configuration
+	// Handle legacy migration if needed
+	if config.NeedsLegacyMigration() {
+		klog.V(2).Info("Migrating MCP config from legacy format", "path", path)
+		config.MigrateFromLegacy()
+
+		// Save the migrated configuration
 		if err := config.Save(path); err != nil {
-			klog.Warningf("Failed to save converted MCP config: %v", err)
+			klog.Warningf("Failed to save migrated MCP config: %v", err)
+		} else {
+			klog.V(2).Info("Successfully migrated and saved MCP config")
 		}
+	}
+
+	// Validate the configuration
+	if err := config.ValidateConfig(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	return &config, nil
 }
 
-// Save saves the configuration to the given path
-// Note: This will save in the new format with the 'servers' array
+// Save saves the configuration to the given path using atomic write
 func (c *Config) Save(path string) error {
 	if path == "" {
 		var err error
@@ -181,40 +182,57 @@ func (c *Config) Save(path string) error {
 		}
 	}
 
-	// Create the directory if it doesn't exist
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 
-	// Create a temporary file in the same directory to ensure atomic write
-	tmpFile, err := os.CreateTemp(dir, ".mcp-config-*")
+	// Marshal the servers (ignore legacy MCPServers field)
+	data, err := c.marshalForSave()
 	if err != nil {
-		return fmt.Errorf("creating temporary file: %w", err)
+		return fmt.Errorf("marshaling config: %w", err)
 	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath) // Clean up the temp file if we fail
 
-	// Create a copy of the config with only the Servers field for saving
+	// Perform atomic write
+	if err := atomicWriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("writing config file: %w", err)
+	}
+
+	klog.V(2).Info("Saved MCP configuration", "path", path)
+	return nil
+}
+
+// marshalForSave marshals the config for saving, excluding legacy fields
+func (c *Config) marshalForSave() ([]byte, error) {
+	// Create a clean config with only the current format
 	saveConfig := struct {
 		Servers []ServerConfig `json:"servers"`
 	}{
 		Servers: c.Servers,
 	}
 
-	// Write to the temporary file
-	data, err := json.MarshalIndent(saveConfig, "", "  ")
-	if err != nil {
-		tmpFile.Close()
-		return fmt.Errorf("marshaling config: %w", err)
-	}
+	return json.MarshalIndent(saveConfig, "", "  ")
+}
 
+// atomicWriteFile writes data to a file atomically using a temporary file
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+
+	// Create temporary file in the same directory
+	tmpFile, err := os.CreateTemp(dir, ".mcp-config-*")
+	if err != nil {
+		return fmt.Errorf("creating temporary file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath) // Clean up on error
+
+	// Write data to temporary file
 	if _, err := tmpFile.Write(data); err != nil {
 		tmpFile.Close()
 		return fmt.Errorf("writing to temporary file: %w", err)
 	}
 
-	// Ensure the data is written to disk
+	// Sync and close
 	if err := tmpFile.Sync(); err != nil {
 		tmpFile.Close()
 		return fmt.Errorf("syncing temporary file: %w", err)
@@ -224,18 +242,13 @@ func (c *Config) Save(path string) error {
 		return fmt.Errorf("closing temporary file: %w", err)
 	}
 
-	// Set the correct permissions before renaming
-	if err := os.Chmod(tmpPath, 0600); err != nil {
+	// Set permissions
+	if err := os.Chmod(tmpPath, perm); err != nil {
 		return fmt.Errorf("setting file permissions: %w", err)
 	}
 
-	// Rename the temporary file to the target file (atomic on Unix-like systems)
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("renaming temporary file: %w", err)
-	}
-
-	klog.V(2).Info("Saved MCP configuration", "path", path)
-	return nil
+	// Atomic rename
+	return os.Rename(tmpPath, path)
 }
 
 // AddServer adds a new server configuration
@@ -267,4 +280,68 @@ func (c *Config) GetServer(name string) (*ServerConfig, bool) {
 		}
 	}
 	return nil, false
+}
+
+// ValidateConfig validates the entire configuration
+func (c *Config) ValidateConfig() error {
+	if len(c.Servers) == 0 {
+		return fmt.Errorf("no servers configured")
+	}
+
+	// Check for duplicate server names
+	serverNames := make(map[string]bool)
+	for i, server := range c.Servers {
+		if err := ValidateServerConfig(server); err != nil {
+			return fmt.Errorf("server %d (%s): %w", i, server.Name, err)
+		}
+
+		if serverNames[server.Name] {
+			return fmt.Errorf("duplicate server name: %s", server.Name)
+		}
+		serverNames[server.Name] = true
+	}
+
+	return nil
+}
+
+// ValidateServerConfig validates a single server configuration
+func ValidateServerConfig(config ServerConfig) error {
+	if config.Name == "" {
+		return fmt.Errorf("server name cannot be empty")
+	}
+
+	if config.Command == "" {
+		return fmt.Errorf("server command cannot be empty")
+	}
+
+	// Additional validation could be added here:
+	// - Check if command exists and is executable
+	// - Validate environment variable format
+	// - Check argument validity
+
+	return nil
+}
+
+// NeedsLegacyMigration checks if the config needs migration from legacy format
+func (c *Config) NeedsLegacyMigration() bool {
+	return len(c.MCPServers) > 0 && len(c.Servers) == 0
+}
+
+// MigrateFromLegacy migrates configuration from legacy MCPServers format
+func (c *Config) MigrateFromLegacy() {
+	if !c.NeedsLegacyMigration() {
+		return
+	}
+
+	c.Servers = make([]ServerConfig, 0, len(c.MCPServers))
+	for name, serverCfg := range c.MCPServers {
+		// Set the name from the map key if not already set
+		if serverCfg.Name == "" {
+			serverCfg.Name = name
+		}
+		c.Servers = append(c.Servers, serverCfg)
+	}
+
+	// Clear the legacy field
+	c.MCPServers = nil
 }

@@ -16,7 +16,6 @@ package mcp
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -39,12 +38,6 @@ func InitializeManager() (*Manager, error) {
 
 // DiscoverAndConnectServers connects to all configured MCP servers and discovers their tools
 func (m *Manager) DiscoverAndConnectServers(ctx context.Context) error {
-	// Only auto-discover if MCP_AUTO_DISCOVER is not explicitly set to false
-	if autodiscover := os.Getenv("MCP_AUTO_DISCOVER"); autodiscover == "false" {
-		klog.V(2).Info("MCP auto-discovery disabled via MCP_AUTO_DISCOVER=false")
-		return nil
-	}
-
 	// Connect to all configured servers with retries
 	klog.V(1).Info("Connecting to MCP servers")
 	connectCtx, connectCancel := context.WithTimeout(ctx, 30*time.Second)
@@ -63,30 +56,22 @@ func (m *Manager) DiscoverAndConnectServers(ctx context.Context) error {
 
 // RefreshToolDiscovery forces a refresh of tool discovery from connected servers
 func (m *Manager) RefreshToolDiscovery(ctx context.Context) (map[string][]ToolInfo, error) {
-	// Try to get list of available tools with retry logic
 	var serverTools map[string][]ToolInfo
-	var err error
 
-	maxRetries := 3
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		klog.V(2).InfoS("Attempting to discover tools from MCP servers", "attempt", attempt, "maxRetries", maxRetries)
-
+	// Use the retry utility for tool discovery
+	retryConfig := DefaultRetryConfig("tool discovery from MCP servers")
+	err := RetryOperation(ctx, retryConfig, func() error {
+		var err error
 		serverTools, err = m.ListAvailableTools(ctx)
-		if err == nil {
-			break
-		}
-
-		if attempt < maxRetries {
-			klog.V(3).InfoS("Tool discovery failed, retrying", "attempt", attempt, "error", err)
-			time.Sleep(time.Duration(attempt) * time.Second) // Progressive backoff
-		}
-	}
+		return err
+	})
 
 	if err != nil {
-		klog.Warningf("Failed to discover tools after %d attempts: %v", maxRetries, err)
+		klog.Warningf("Failed to discover tools after retries: %v", err)
 		return nil, err
 	}
 
+	// Log discovery results
 	toolCount := 0
 	for serverName, tools := range serverTools {
 		klog.V(1).Info("Discovered tools from MCP server", "server", serverName, "toolCount", len(tools))

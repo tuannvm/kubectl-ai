@@ -20,6 +20,7 @@ import (
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 	mcplib "github.com/mark3labs/mcp-go/mcp"
+	"k8s.io/klog/v2"
 )
 
 // ConvertToolToGollm converts an MCP tool to gollm.FunctionDefinition
@@ -87,24 +88,13 @@ func ConvertMCPSchemaToGollm(mcpSchema *mcplib.ToolInputSchema) (*gollm.Schema, 
 func convertJSONSchemaToGollm(jsonSchema map[string]interface{}) (*gollm.Schema, error) {
 	schema := &gollm.Schema{}
 
-	// Handle type
-	if typeVal, ok := jsonSchema["type"]; ok {
-		switch typeVal {
-		case "object":
-			schema.Type = gollm.TypeObject
-		case "string":
-			schema.Type = gollm.TypeString
-		case "number", "integer":
-			schema.Type = gollm.TypeInteger
-		case "boolean":
-			schema.Type = gollm.TypeBoolean
-		case "array":
-			schema.Type = gollm.TypeArray
-		default:
-			schema.Type = gollm.TypeString // Default fallback
-		}
+	// Handle type with validation
+	schemaType, err := parseSchemaType(jsonSchema)
+	if err != nil {
+		klog.V(3).InfoS("Schema type parsing failed, using default", "error", err)
+		schema.Type = gollm.TypeObject // Safe default
 	} else {
-		schema.Type = gollm.TypeObject // Default to object if no type specified
+		schema.Type = schemaType
 	}
 
 	// Handle description
@@ -114,50 +104,115 @@ func convertJSONSchemaToGollm(jsonSchema map[string]interface{}) (*gollm.Schema,
 
 	// Handle properties for object types
 	if schema.Type == gollm.TypeObject {
-		if props, ok := jsonSchema["properties"].(map[string]interface{}); ok {
-			schema.Properties = make(map[string]*gollm.Schema)
-			for propName, propSchema := range props {
-				if propSchemaMap, ok := propSchema.(map[string]interface{}); ok {
-					convertedProp, err := convertJSONSchemaToGollm(propSchemaMap)
-					if err != nil {
-						// Log error but continue with other properties
-						continue
-					}
-					schema.Properties[propName] = convertedProp
-				}
-			}
-		}
-
-		// Handle required fields
-		if required, ok := jsonSchema["required"].([]interface{}); ok {
-			schema.Required = make([]string, len(required))
-			for i, req := range required {
-				if reqStr, ok := req.(string); ok {
-					schema.Required[i] = reqStr
-				}
-			}
+		properties, required, err := parseObjectProperties(jsonSchema)
+		if err != nil {
+			klog.V(3).InfoS("Failed to parse object properties", "error", err)
+			// Use fallback properties
+			schema.Properties = createFallbackProperties()
+		} else {
+			schema.Properties = properties
+			schema.Required = required
 		}
 
 		// Ensure we have at least one property for valid OpenAI schema
 		if len(schema.Properties) == 0 {
-			schema.Properties = map[string]*gollm.Schema{
-				"input": {
-					Type:        gollm.TypeString,
-					Description: "Input for the tool",
-				},
-			}
+			schema.Properties = createFallbackProperties()
 		}
 	}
 
 	// Handle array items
 	if schema.Type == gollm.TypeArray {
-		if items, ok := jsonSchema["items"].(map[string]interface{}); ok {
-			itemSchema, err := convertJSONSchemaToGollm(items)
-			if err == nil {
-				schema.Items = itemSchema
-			}
+		if items, err := parseArrayItems(jsonSchema); err != nil {
+			klog.V(3).InfoS("Failed to parse array items", "error", err)
+		} else {
+			schema.Items = items
 		}
 	}
 
 	return schema, nil
+}
+
+// parseSchemaType extracts and validates the schema type
+func parseSchemaType(jsonSchema map[string]interface{}) (gollm.SchemaType, error) {
+	typeVal, ok := jsonSchema["type"]
+	if !ok {
+		return gollm.TypeObject, nil // Default to object if no type specified
+	}
+
+	typeStr, ok := typeVal.(string)
+	if !ok {
+		return "", fmt.Errorf("type field is not a string: %T", typeVal)
+	}
+
+	switch typeStr {
+	case "object":
+		return gollm.TypeObject, nil
+	case "string":
+		return gollm.TypeString, nil
+	case "number", "integer":
+		return gollm.TypeInteger, nil
+	case "boolean":
+		return gollm.TypeBoolean, nil
+	case "array":
+		return gollm.TypeArray, nil
+	default:
+		return "", fmt.Errorf("unsupported schema type: %s", typeStr)
+	}
+}
+
+// parseObjectProperties parses object properties and required fields
+func parseObjectProperties(jsonSchema map[string]interface{}) (map[string]*gollm.Schema, []string, error) {
+	properties := make(map[string]*gollm.Schema)
+	var required []string
+
+	// Parse properties
+	if props, ok := jsonSchema["properties"].(map[string]interface{}); ok {
+		for propName, propSchema := range props {
+			if propSchemaMap, ok := propSchema.(map[string]interface{}); ok {
+				convertedProp, err := convertJSONSchemaToGollm(propSchemaMap)
+				if err != nil {
+					klog.V(3).InfoS("Failed to convert property schema", "property", propName, "error", err)
+					// Continue with other properties instead of failing completely
+					continue
+				}
+				properties[propName] = convertedProp
+			} else {
+				klog.V(3).InfoS("Property schema is not an object", "property", propName, "type", fmt.Sprintf("%T", propSchema))
+			}
+		}
+	}
+
+	// Parse required fields
+	if requiredArray, ok := jsonSchema["required"].([]interface{}); ok {
+		required = make([]string, 0, len(requiredArray))
+		for _, req := range requiredArray {
+			if reqStr, ok := req.(string); ok {
+				required = append(required, reqStr)
+			} else {
+				klog.V(3).InfoS("Required field is not a string", "field", req, "type", fmt.Sprintf("%T", req))
+			}
+		}
+	}
+
+	return properties, required, nil
+}
+
+// parseArrayItems parses array item schema
+func parseArrayItems(jsonSchema map[string]interface{}) (*gollm.Schema, error) {
+	items, ok := jsonSchema["items"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("array items schema is not an object: %T", jsonSchema["items"])
+	}
+
+	return convertJSONSchemaToGollm(items)
+}
+
+// createFallbackProperties creates safe fallback properties for object schemas
+func createFallbackProperties() map[string]*gollm.Schema {
+	return map[string]*gollm.Schema{
+		"input": {
+			Type:        gollm.TypeString,
+			Description: "Input for the tool",
+		},
+	}
 }

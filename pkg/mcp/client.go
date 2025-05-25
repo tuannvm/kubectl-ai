@@ -67,46 +67,113 @@ func (c *Client) Connect(ctx context.Context) error {
 		return nil // Already connected
 	}
 
-	// Expand the command path to handle ~ and environment variables
-	expandedCmd, err := expandPath(c.Command)
+	// Step 1: Prepare environment and command
+	expandedCmd, finalEnv, err := c.prepareEnvironment()
 	if err != nil {
-		return fmt.Errorf("expanding command path: %w", err)
+		return fmt.Errorf("preparing environment: %w", err)
 	}
 
-	// Build proper environment slice by merging process environment with custom env
-	processEnv := os.Environ()
-	envMap := make(map[string]string)
-	for _, e := range processEnv {
-		parts := strings.SplitN(e, "=", 2)
-		if len(parts) == 2 {
-			envMap[parts[0]] = parts[1]
-		}
-	}
-	// Override with custom environment variables
-	for _, env := range c.Env {
-		parts := strings.SplitN(env, "=", 2)
-		if len(parts) == 2 {
-			envMap[parts[0]] = parts[1]
-		}
-	}
-	finalEnv := make([]string, 0, len(envMap))
-	for k, v := range envMap {
-		finalEnv = append(finalEnv, fmt.Sprintf("%s=%s", k, v))
-	}
-
-	// Create the MCP client with proper environment
-	client, err := mcpclient.NewStdioMCPClient(expandedCmd, finalEnv, c.Args...)
-	if err != nil {
+	// Step 2: Create the MCP client
+	if err := c.createMCPClient(expandedCmd, finalEnv); err != nil {
 		return fmt.Errorf("creating MCP client: %w", err)
 	}
 
-	c.client = client
+	// Step 3: Initialize the connection
+	if err := c.initializeConnection(ctx); err != nil {
+		c.cleanup()
+		return fmt.Errorf("initializing connection: %w", err)
+	}
 
-	// Initialize the client with proper timeout - this is required before making any requests
-	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Step 4: Verify the connection
+	if err := c.verifyConnection(ctx); err != nil {
+		c.cleanup()
+		return fmt.Errorf("verifying connection: %w", err)
+	}
+
+	klog.V(2).Info("Successfully connected to MCP server", "name", c.Name)
+	return nil
+}
+
+// prepareEnvironment expands the command path and merges environment variables
+func (c *Client) prepareEnvironment() (string, []string, error) {
+	// Expand the command path to handle ~ and environment variables
+	expandedCmd, err := expandPath(c.Command)
+	if err != nil {
+		return "", nil, fmt.Errorf("expanding command path: %w", err)
+	}
+
+	// Build proper environment slice by merging process environment with custom env
+	finalEnv := mergeEnvironmentVariables(os.Environ(), c.Env)
+
+	return expandedCmd, finalEnv, nil
+}
+
+// createMCPClient creates the underlying MCP client
+func (c *Client) createMCPClient(command string, env []string) error {
+	client, err := mcpclient.NewStdioMCPClient(command, env, c.Args...)
+	if err != nil {
+		return fmt.Errorf("creating stdio MCP client: %w", err)
+	}
+	c.client = client
+	return nil
+}
+
+// initializeConnection initializes the MCP connection with proper handshake
+func (c *Client) initializeConnection(ctx context.Context) error {
+	initCtx, initCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer initCancel()
 
-	initReq := mcp.InitializeRequest{
+	initReq := c.buildInitializeRequest()
+	_, err := c.client.Initialize(initCtx, initReq)
+	if err != nil {
+		return fmt.Errorf("initializing MCP client: %w", err)
+	}
+
+	return nil
+}
+
+// verifyConnection verifies the connection works by testing tool listing with retry
+func (c *Client) verifyConnection(ctx context.Context) error {
+	verifyCtx, verifyCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer verifyCancel()
+
+	_, err := c.ListTools(verifyCtx)
+	if err != nil {
+		klog.V(2).InfoS("First ListTools attempt failed, trying ping and retry", "server", c.Name, "error", err)
+		return c.retryConnectionWithPing(ctx)
+	}
+
+	return nil
+}
+
+// retryConnectionWithPing attempts to ping the server and retry ListTools
+func (c *Client) retryConnectionWithPing(ctx context.Context) error {
+	// Try ping to check if server is responsive
+	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer pingCancel()
+
+	if err := c.client.Ping(pingCtx); err != nil {
+		klog.V(2).InfoS("Ping also failed", "server", c.Name, "error", err)
+		return fmt.Errorf("server ping failed: %w", err)
+	}
+
+	klog.V(2).InfoS("Ping succeeded, retrying ListTools", "server", c.Name)
+
+	// Retry ListTools after successful ping
+	retryCtx, retryCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer retryCancel()
+
+	_, err := c.ListTools(retryCtx)
+	if err != nil {
+		return fmt.Errorf("ListTools retry failed: %w", err)
+	}
+
+	return nil
+}
+
+// buildInitializeRequest creates the MCP initialize request
+func (c *Client) buildInitializeRequest() mcp.InitializeRequest {
+	return mcp.InitializeRequest{
 		Request: mcp.Request{
 			Method: "initialize",
 		},
@@ -123,45 +190,41 @@ func (c *Client) Connect(ctx context.Context) error {
 			},
 		},
 	}
+}
 
-	_, err = c.client.Initialize(initCtx, initReq)
-	if err != nil {
-		_ = c.client.Close() // Clean up on error
+// cleanup closes the client connection and resets the client state
+func (c *Client) cleanup() {
+	if c.client != nil {
+		_ = c.client.Close()
 		c.client = nil
-		return fmt.Errorf("initializing MCP client: %w", err)
 	}
+}
 
-	// Verify the connection by listing tools with improved retry logic
-	verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer verifyCancel()
+// mergeEnvironmentVariables merges process environment with custom environment variables
+func mergeEnvironmentVariables(processEnv, customEnv []string) []string {
+	envMap := make(map[string]string)
 
-	_, lastErr := c.ListTools(verifyCtx)
-	if lastErr != nil {
-		klog.V(2).InfoS("First ListTools attempt failed, trying ping and retry", "server", c.Name, "error", lastErr)
-
-		// Try ping to check if server is responsive
-		pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if pingErr := c.client.Ping(pingCtx); pingErr != nil {
-			pingCancel()
-			klog.V(2).InfoS("Ping also failed", "server", c.Name, "error", pingErr)
-		} else {
-			pingCancel()
-			klog.V(2).InfoS("Ping succeeded, retrying ListTools", "server", c.Name)
-
-			// Retry ListTools after successful ping
-			retryCtx, retryCancel := context.WithTimeout(ctx, 10*time.Second)
-			_, lastErr = c.ListTools(retryCtx)
-			retryCancel()
+	// Parse process environment
+	for _, e := range processEnv {
+		if parts := strings.SplitN(e, "=", 2); len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
 		}
 	}
 
-	if lastErr != nil {
-		_ = c.Close() // Clean up on error
-		return fmt.Errorf("verifying MCP connection with ping retry: %w", lastErr)
+	// Override with custom environment variables
+	for _, env := range customEnv {
+		if parts := strings.SplitN(env, "=", 2); len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
 	}
 
-	klog.V(2).Info("Successfully connected to MCP server", "name", c.Name)
-	return nil
+	// Convert back to slice
+	finalEnv := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		finalEnv = append(finalEnv, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	return finalEnv
 }
 
 // Close closes the connection to the MCP server

@@ -17,7 +17,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
@@ -27,15 +26,10 @@ import (
 
 var mcpManager *mcp.Manager
 
-// init automatically discovers and registers MCP tools during package initialization
+// init function is kept minimal - MCP initialization is handled by --mcp-client flag
 func init() {
-	// Only auto-discover if MCP_AUTO_DISCOVER is not explicitly set to false
-	if autodiscover := os.Getenv("MCP_AUTO_DISCOVER"); autodiscover == "false" {
-		klog.V(2).Info("MCP auto-discovery disabled via MCP_AUTO_DISCOVER=false")
-		return
-	}
-
 	// MCP client initialization will be handled via explicit --mcp-client flag
+	// No automatic discovery in init() to ensure proper control flow
 }
 
 // MCPTool wraps an MCP server tool to implement the Tool interface

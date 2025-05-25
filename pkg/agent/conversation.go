@@ -425,9 +425,9 @@ func (a *PromptData) ToolNames() string {
 
 // MCPStatus returns information about connected MCP servers
 func (a *PromptData) MCPStatus() string {
-	// Check if auto-discovery is disabled
-	if autodiscover := os.Getenv("MCP_AUTO_DISCOVER"); autodiscover == "false" {
-		return "MCP auto-discovery disabled."
+	// Check if MCP client mode is enabled via the flag
+	if !a.MCPClientEnabledFlag {
+		return "MCP client mode disabled."
 	}
 
 	// Get access to MCP manager
