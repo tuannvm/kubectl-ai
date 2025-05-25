@@ -17,6 +17,8 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/mcp"
@@ -122,8 +124,11 @@ func (t *MCPTool) Run(ctx context.Context, args map[string]any) (any, error) {
 
 	log.V(1).Info("✅ [MCP] Server connection verified", "server", t.serverName)
 
+	// Convert arguments to proper types for MCP server
+	convertedArgs := convertArgsForMCP(t.serverName, args)
+
 	// Execute tool on MCP server
-	result, err := client.CallTool(ctx, t.toolName, args)
+	result, err := client.CallTool(ctx, t.toolName, convertedArgs)
 	if err != nil {
 		log.Error(err, "❌ [MCP] Tool execution failed",
 			"tool", t.toolName,
@@ -170,6 +175,100 @@ func (r *MCPToolResult) String() string {
 		r.ServerName, r.ToolName, status, resultStr)
 }
 
+// convertArgsForMCP converts arguments using pure generic approach
+func convertArgsForMCP(serverName string, args map[string]any) map[string]any {
+	converted := make(map[string]any)
+
+	for key, value := range args {
+		// Convert parameter name using generic snake_case to camelCase
+		convertedKey := snakeToCamelCase(key)
+
+		// Convert value type using intelligent inference
+		convertedValue := convertValueType(convertedKey, value)
+
+		converted[convertedKey] = convertedValue
+	}
+
+	return converted
+}
+
+// snakeToCamelCase converts snake_case to camelCase generically
+func snakeToCamelCase(s string) string {
+	if !strings.Contains(s, "_") {
+		return s // No conversion needed
+	}
+
+	parts := strings.Split(s, "_")
+	if len(parts) <= 1 {
+		return s
+	}
+
+	// First part stays lowercase, subsequent parts get capitalized
+	result := parts[0]
+	for _, part := range parts[1:] {
+		if len(part) > 0 {
+			result += strings.ToUpper(part[:1]) + part[1:]
+		}
+	}
+	return result
+}
+
+// convertValueType converts value to appropriate type using intelligent inference
+func convertValueType(paramName string, value any) any {
+	// Generic type inference based on parameter name patterns
+	lowerName := strings.ToLower(paramName)
+
+	// Common number parameter patterns
+	if strings.Contains(lowerName, "number") || strings.Contains(lowerName, "count") ||
+		strings.Contains(lowerName, "total") || strings.Contains(lowerName, "max") ||
+		strings.Contains(lowerName, "min") || strings.Contains(lowerName, "limit") {
+		return convertToNumber(value)
+	}
+
+	// Common boolean parameter patterns
+	if strings.HasPrefix(lowerName, "is") || strings.HasPrefix(lowerName, "has") ||
+		strings.HasPrefix(lowerName, "needs") || strings.HasPrefix(lowerName, "enable") ||
+		strings.Contains(lowerName, "required") || strings.Contains(lowerName, "enabled") {
+		return convertToBoolean(value)
+	}
+
+	// Default: keep as-is
+	return value
+}
+
+// convertToNumber attempts to convert value to a number
+func convertToNumber(value any) any {
+	switch v := value.(type) {
+	case string:
+		if num, err := strconv.Atoi(v); err == nil {
+			return num
+		}
+		if num, err := strconv.ParseFloat(v, 64); err == nil {
+			return num
+		}
+	case float64:
+		return int(v) // Convert float to int if it's a whole number
+	case int, int64, int32:
+		return v
+	}
+	return value // Keep original if conversion fails
+}
+
+// convertToBoolean attempts to convert value to a boolean
+func convertToBoolean(value any) any {
+	switch v := value.(type) {
+	case string:
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	case bool:
+		return v
+	case int:
+		return v != 0
+	}
+	return value // Keep original if conversion fails
+}
+
 // formatArgsForDisplay creates a simple display format for arguments
 func formatArgsForDisplay(args map[string]any) string {
 	return fmt.Sprintf("%v", args)
@@ -200,6 +299,7 @@ func registerToolsFromConnectedServers(ctx context.Context) error {
 	toolCount := 0
 	for serverName, tools := range serverTools {
 		klog.V(1).Info("Registering tools from MCP server", "server", serverName, "toolCount", len(tools))
+		fmt.Printf("🔧 Registering %d tools from MCP server: %s\n", len(tools), serverName)
 
 		for _, toolInfo := range tools {
 			// Create schema for the tool using the local kubectl-ai specific functions
@@ -218,6 +318,7 @@ func registerToolsFromConnectedServers(ctx context.Context) error {
 			// Register with the tools system
 			RegisterTool(mcpTool)
 
+			fmt.Printf("  ✅ Registered: %s (MCP:%s)\n", toolInfo.Name, serverName)
 			klog.V(1).Info("Registered MCP tool", "tool", toolInfo.Name, "server", serverName)
 			toolCount++
 		}
@@ -242,21 +343,20 @@ func InitializeMCPClient() error {
 
 	mcpManager = manager
 
-	// Start connection and tool discovery asynchronously to avoid blocking UI
-	go func() {
-		ctx := context.Background()
+	// Start connection and tool discovery synchronously to ensure tools are available before conversation starts
+	ctx := context.Background()
 
-		// Connect to servers
-		if err := mcpManager.DiscoverAndConnectServers(ctx); err != nil {
-			klog.V(2).Info("MCP server connection failed", "error", err)
-			return
-		}
+	// Connect to servers
+	if err := mcpManager.DiscoverAndConnectServers(ctx); err != nil {
+		klog.V(2).Info("MCP server connection failed", "error", err)
+		return fmt.Errorf("MCP server connection failed: %w", err)
+	}
 
-		// Register discovered tools
-		if err := registerToolsFromConnectedServers(ctx); err != nil {
-			klog.V(2).Info("MCP tool registration failed", "error", err)
-		}
-	}()
+	// Register discovered tools
+	if err := registerToolsFromConnectedServers(ctx); err != nil {
+		klog.V(2).Info("MCP tool registration failed", "error", err)
+		return fmt.Errorf("MCP tool registration failed: %w", err)
+	}
 
 	return nil
 }
