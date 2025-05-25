@@ -326,7 +326,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			klog.Warningf("Failed to initialize MCP client: %v", err)
 			// Continue with kubectl functionality - MCP failure should not block core features
 		} else {
-			klog.V(1).Info("MCP client initialization started successfully")
+			klog.V(1).Info("MCP client initialization completed successfully")
 		}
 	}
 

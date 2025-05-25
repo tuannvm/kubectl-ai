@@ -99,30 +99,13 @@ func (t *MCPTool) FunctionDefinition() *gollm.FunctionDefinition {
 	return t.schema
 }
 
-// Run executes the MCP tool with enhanced logging and feedback
+// Run executes the MCP tool
 func (t *MCPTool) Run(ctx context.Context, args map[string]any) (any, error) {
-	log := klog.FromContext(ctx)
-
-	// Show MCP invocation message to user
-	if err := ShowMCPInvocationMessage(ctx, t.toolName, t.serverName); err != nil {
-		log.V(2).Info("Failed to show MCP invocation message", "error", err)
-	}
-
-	// Enhanced logging for debugging
-	log.V(1).Info("🔧 [MCP] Starting tool execution",
-		"tool", t.toolName,
-		"server", t.serverName,
-		"args", formatArgsForDisplay(args))
-
 	// Get MCP client for the server
 	client, exists := t.manager.GetClient(t.serverName)
 	if !exists {
-		err := fmt.Errorf("MCP server %q not connected", t.serverName)
-		log.Error(err, "❌ [MCP] Server connection failed", "server", t.serverName)
-		return nil, err
+		return nil, fmt.Errorf("MCP server %q not connected", t.serverName)
 	}
-
-	log.V(1).Info("✅ [MCP] Server connection verified", "server", t.serverName)
 
 	// Convert arguments to proper types for MCP server
 	convertedArgs := convertArgsForMCP(t.serverName, args)
@@ -130,49 +113,10 @@ func (t *MCPTool) Run(ctx context.Context, args map[string]any) (any, error) {
 	// Execute tool on MCP server
 	result, err := client.CallTool(ctx, t.toolName, convertedArgs)
 	if err != nil {
-		log.Error(err, "❌ [MCP] Tool execution failed",
-			"tool", t.toolName,
-			"server", t.serverName,
-			"args", formatArgsForDisplay(args))
 		return nil, fmt.Errorf("calling MCP tool %q on server %q: %w", t.toolName, t.serverName, err)
 	}
 
-	log.V(1).Info("🎉 [MCP] Tool executed successfully",
-		"tool", t.toolName,
-		"server", t.serverName,
-		"resultLength", len(fmt.Sprintf("%v", result)))
-
-	// Return enhanced result with MCP context
-	return &MCPToolResult{
-		ServerName: t.serverName,
-		ToolName:   t.toolName,
-		Result:     result,
-		Success:    true,
-	}, nil
-}
-
-// MCPToolResult wraps MCP tool execution results with metadata
-type MCPToolResult struct {
-	ServerName string `json:"mcp_server"`
-	ToolName   string `json:"mcp_tool"`
-	Result     any    `json:"result"`
-	Success    bool   `json:"success"`
-}
-
-// String provides a user-friendly string representation
-func (r *MCPToolResult) String() string {
-	status := "✅ SUCCESS"
-	if !r.Success {
-		status = "❌ FAILED"
-	}
-
-	resultStr := fmt.Sprintf("%v", r.Result)
-	if len(resultStr) > 200 {
-		resultStr = resultStr[:197] + "..."
-	}
-
-	return fmt.Sprintf("🔧 [MCP:%s] %s executed %s\nResult: %s",
-		r.ServerName, r.ToolName, status, resultStr)
+	return result, nil
 }
 
 // convertArgsForMCP converts arguments using pure generic approach
@@ -269,17 +213,6 @@ func convertToBoolean(value any) any {
 	return value // Keep original if conversion fails
 }
 
-// formatArgsForDisplay creates a simple display format for arguments
-func formatArgsForDisplay(args map[string]any) string {
-	return fmt.Sprintf("%v", args)
-}
-
-// ShowMCPInvocationMessage displays a message to the user when an MCP tool is invoked
-func ShowMCPInvocationMessage(ctx context.Context, toolName, serverName string) error {
-	fmt.Printf("🔧 [MCP:%s] Invoking %s\n", serverName, toolName)
-	return nil
-}
-
 // =============================================================================
 // MCP Integration Functions
 // =============================================================================
@@ -298,11 +231,8 @@ func registerToolsFromConnectedServers(ctx context.Context) error {
 
 	toolCount := 0
 	for serverName, tools := range serverTools {
-		klog.V(1).Info("Registering tools from MCP server", "server", serverName, "toolCount", len(tools))
-		fmt.Printf("🔧 Registering %d tools from MCP server: %s\n", len(tools), serverName)
-
 		for _, toolInfo := range tools {
-			// Create schema for the tool using the local kubectl-ai specific functions
+			// Create schema for the tool
 			schema, err := convertToolToGollm(&mcp.Tool{
 				Name:        toolInfo.Name,
 				Description: toolInfo.Description,
@@ -317,17 +247,12 @@ func registerToolsFromConnectedServers(ctx context.Context) error {
 
 			// Register with the tools system
 			RegisterTool(mcpTool)
-
-			fmt.Printf("  ✅ Registered: %s (MCP:%s)\n", toolInfo.Name, serverName)
-			klog.V(1).Info("Registered MCP tool", "tool", toolInfo.Name, "server", serverName)
 			toolCount++
 		}
 	}
 
 	if toolCount > 0 {
-		klog.InfoS("Successfully registered MCP tools", "totalTools", toolCount)
-	} else {
-		klog.V(1).Info("No MCP tools were registered")
+		klog.InfoS("Registered MCP tools", "totalTools", toolCount)
 	}
 
 	return nil
