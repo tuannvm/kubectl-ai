@@ -16,6 +16,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/mcp"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
@@ -40,7 +42,13 @@ func GetMCPServerStatusWithClientMode(mcpClientEnabled bool) ([]ui.Block, error)
 		mcpManager = tools.GetMCPManager()
 	}
 
-	return mcp.GetServerStatusBlocks(ctx, mcpClientEnabled, mcpManager)
+	status, err := mcp.GetServerStatus(ctx, mcpClientEnabled, mcpManager)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert the status into UI blocks and return
+	return GenerateMCPStatusBlocks(status), nil
 }
 
 // StartMCPServer starts the MCP server with the given configuration
@@ -58,4 +66,95 @@ func LoadMCPConfig() {
 	} else {
 		klog.Warningf("Failed to get MCP config path: %v", err)
 	}
+}
+
+// GenerateMCPStatusBlocks converts MCP server status into UI blocks
+// This is the main entry point for generating UI blocks from MCP status data
+func GenerateMCPStatusBlocks(status *mcp.MCPStatus) []ui.Block {
+	var blocks []ui.Block
+
+	if status == nil || status.TotalServers == 0 {
+		blocks = append(blocks, ui.NewAgentTextBlock().WithText("No MCP servers configured."))
+		return blocks
+	}
+
+	// Add summary block based on connection status
+	if status.ClientEnabled {
+		blocks = append(blocks, buildConnectionSummaryBlock(status))
+	} else {
+		blocks = append(blocks, buildConfiguredServersBlock(status))
+	}
+
+	// Add details for each server
+	for _, serverInfo := range status.ServerInfoList {
+		serverBlock := ui.NewAgentTextBlock()
+		serverText := formatServerStatus(serverInfo, status.ClientEnabled)
+		serverBlock.SetText(serverText)
+		blocks = append(blocks, serverBlock)
+	}
+
+	return blocks
+}
+
+// formatServerStatus formats a single server's status as a text string
+func formatServerStatus(info mcp.ServerConnectionInfo, mcpClientEnabled bool) string {
+	serverText := fmt.Sprintf("    • %s (%s)", info.Name, info.Command)
+	if info.IsLegacy {
+		serverText += " (legacy)"
+	}
+
+	if mcpClientEnabled {
+		if info.IsConnected {
+			serverText += " - Connected"
+			if len(info.AvailableTools) > 0 {
+				toolNames := make([]string, len(info.AvailableTools))
+				for i, tool := range info.AvailableTools {
+					toolNames[i] = tool.Name
+				}
+				serverText += fmt.Sprintf(", Tools: %s", strings.Join(toolNames, ", "))
+			} else {
+				serverText += ", No tools discovered"
+			}
+		} else {
+			serverText += " - Connection failed"
+		}
+	} else {
+		serverText += " - Not connected (--mcp-client disabled)"
+	}
+
+	return serverText
+}
+
+// buildConnectionSummaryBlock creates a summary block for connected servers
+func buildConnectionSummaryBlock(status *mcp.MCPStatus) ui.Block {
+	var summary string
+	if status.ConnectedCount == 0 {
+		summary = fmt.Sprintf("Failed to connect to all %d MCP server(s)", status.TotalServers)
+	} else if status.FailedCount == 0 {
+		summary = fmt.Sprintf("Successfully connected to %d MCP server(s)", status.ConnectedCount)
+		if status.TotalTools > 0 {
+			summary += fmt.Sprintf(" (%d tools discovered)", status.TotalTools)
+		}
+	} else {
+		summary = fmt.Sprintf("Connected to %d/%d MCP server(s) (%d failed)",
+			status.ConnectedCount, status.TotalServers, status.FailedCount)
+		if status.TotalTools > 0 {
+			summary += fmt.Sprintf(" (%d tools discovered)", status.TotalTools)
+		}
+	}
+
+	return ui.NewAgentTextBlock().WithText(summary)
+}
+
+// buildConfiguredServersBlock creates a summary block for configured servers when client mode is disabled
+func buildConfiguredServersBlock(status *mcp.MCPStatus) ui.Block {
+	// Extract server names for display
+	serverNames := make([]string, 0, status.TotalServers)
+	for _, serverInfo := range status.ServerInfoList {
+		serverNames = append(serverNames, serverInfo.Name)
+	}
+
+	summary := fmt.Sprintf("Found %d configured MCP server(s): %s (MCP client mode disabled - use --mcp-client to enable)",
+		status.TotalServers, strings.Join(serverNames, ", "))
+	return ui.NewAgentTextBlock().WithText(summary)
 }
