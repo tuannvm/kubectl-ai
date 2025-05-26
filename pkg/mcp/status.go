@@ -62,7 +62,7 @@ func GetServerStatus(ctx context.Context, mcpClientEnabled bool, mcpManager MCPM
 	// Try to get MCP config path
 	mcpConfigPath, err := DefaultConfigPath()
 	if err != nil {
-		klog.Warningf("[DEBUG] Failed to get MCP config path: %v", err)
+		klog.V(2).Infof("Failed to get MCP config path: %v", err)
 		return status, nil // Don't fail, just return empty status
 	}
 
@@ -169,11 +169,11 @@ func LogConfig(mcpConfigPath string) error {
 		if totalServers > 1 {
 			serverWord = "servers"
 		}
-		klog.Infof("Loaded %d MCP %s from %s", totalServers, serverWord, mcpConfigPath)
+		klog.V(2).Infof("Loaded %d MCP %s from %s", totalServers, serverWord, mcpConfigPath)
 
 		// Log servers from the new format
 		for _, server := range mcpConfig.Servers {
-			klog.Infof("  - %s: %s", server.Name, server.Command)
+			klog.V(2).Infof("  - %s: %s", server.Name, server.Command)
 		}
 
 		// Log servers from the legacy format
@@ -182,7 +182,7 @@ func LogConfig(mcpConfigPath string) error {
 			if server.Name != "" {
 				serverName = server.Name
 			}
-			klog.Infof("  - %s: %s (legacy)", serverName, server.Command)
+			klog.V(2).Infof("  - %s: %s (legacy)", serverName, server.Command)
 		}
 	}
 
