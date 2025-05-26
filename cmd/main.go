@@ -381,6 +381,10 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			for _, block := range mcpBlocks {
 				doc.AddBlock(block)
 			}
+			// Log MCP server status to log file
+			klog.Info("MCP server status retrieved successfully for welcome message")
+		} else if err != nil {
+			klog.Warningf("Failed to retrieve MCP server status for welcome message: %v", err)
 		}
 	}
 
@@ -460,6 +464,10 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			header := ui.NewAgentTextBlock().WithText("\nMCP Server Status:")
 			mcpBlocks = append(mcpBlocks, header)
 			mcpBlocks = append(mcpBlocks, blocks...)
+			// Log MCP server status to log file
+			klog.Info("MCP server status retrieved successfully for REPL startup")
+		} else if err != nil {
+			klog.Warningf("Failed to retrieve MCP server status for REPL startup: %v", err)
 		}
 	}
 

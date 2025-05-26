@@ -44,7 +44,21 @@ func GetMCPServerStatusWithClientMode(mcpClientEnabled bool) ([]ui.Block, error)
 
 	status, err := mcp.GetServerStatus(ctx, mcpClientEnabled, mcpManager)
 	if err != nil {
+		klog.Errorf("Failed to get MCP server status: %v", err)
 		return nil, err
+	}
+
+	// Log MCP server status details
+	if status != nil {
+		klog.Infof("MCP Status: Total Servers=%d, Connected=%d, Failed=%d, Total Tools=%d, Client Enabled=%v",
+			status.TotalServers, status.ConnectedCount, status.FailedCount, status.TotalTools, status.ClientEnabled)
+
+		// Log individual server details
+		for _, server := range status.ServerInfoList {
+			toolCount := len(server.AvailableTools)
+			klog.V(2).Infof("MCP Server: %s, Command=%s, Legacy=%v, Connected=%v, Tools=%d",
+				server.Name, server.Command, server.IsLegacy, server.IsConnected, toolCount)
+		}
 	}
 
 	// Convert the status into UI blocks and return
