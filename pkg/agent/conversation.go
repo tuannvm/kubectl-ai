@@ -84,9 +84,8 @@ func (s *Conversation) Init(ctx context.Context, doc *ui.Document) error {
 	log.Info("Created temporary working directory", "workDir", workDir)
 
 	systemPrompt, err := s.generatePrompt(ctx, defaultSystemPromptTemplate, PromptData{
-		Tools:                s.Tools,
-		EnableToolUseShim:    s.EnableToolUseShim,
-		MCPClientEnabledFlag: s.MCPClientEnabled,
+		Tools:             s.Tools,
+		EnableToolUseShim: s.EnableToolUseShim,
 	})
 	if err != nil {
 		return fmt.Errorf("generating system prompt: %w", err)
@@ -401,8 +400,7 @@ type PromptData struct {
 	Query string
 	Tools tools.Tools
 
-	EnableToolUseShim    bool
-	MCPClientEnabledFlag bool
+	EnableToolUseShim bool
 }
 
 func (a *PromptData) ToolsAsJSON() string {
@@ -421,37 +419,6 @@ func (a *PromptData) ToolsAsJSON() string {
 
 func (a *PromptData) ToolNames() string {
 	return strings.Join(a.Tools.Names(), ", ")
-}
-
-// MCPStatus returns information about connected MCP servers
-func (a *PromptData) MCPStatus() string {
-	// Check if MCP client mode is enabled via the flag
-	if !a.MCPClientEnabledFlag {
-		return "MCP client mode disabled."
-	}
-
-	// Get access to MCP manager
-	mcpManager := tools.GetMCPManager()
-	if mcpManager == nil {
-		return "No MCP servers configured."
-	}
-
-	clients := mcpManager.ListClients()
-	if len(clients) == 0 {
-		return "No MCP servers connected."
-	}
-
-	var status []string
-	for _, client := range clients {
-		status = append(status, fmt.Sprintf("- %s: Connected", client.Name))
-	}
-
-	return fmt.Sprintf("Connected MCP servers:\n%s", strings.Join(status, "\n"))
-}
-
-// MCPClientEnabled returns whether MCP client mode is enabled
-func (a *PromptData) MCPClientEnabled() bool {
-	return a.MCPClientEnabledFlag
 }
 
 type ReActResponse struct {
