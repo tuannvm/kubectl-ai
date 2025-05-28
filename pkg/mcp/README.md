@@ -11,68 +11,41 @@ The MCP client allows `kubectl-ai` to connect to MCP servers, discover available
 - Connect to multiple MCP servers simultaneously
 - Automatic discovery of available tools from connected servers
 - Execute tools on remote MCP servers with parameter conversion
-- Configuration-based server management with both new and legacy formats
+- Configuration-based server management
 - Generic parameter name and type conversion (snake_case → camelCase, intelligent type inference)
 - Synchronous initialization ensuring tools are available before conversation starts
 
 ## Configuration
 
-MCP server configurations are stored in `~/.config/kubectl-ai/mcp.json`. If this file doesn't exist, a default configuration will be created automatically.
+MCP server configurations are stored in `~/.config/kubectl-ai/mcp.yaml`. If this file doesn't exist, a default configuration will be created automatically.
 
 ### Default Configuration
 
 By default, the MCP client is configured with sequential thinking MCP server:
 
-```json
-{
-  "servers": [
-    {
-      "name": "sequential-thinking",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
-    }
-  ]
-}
+```yaml
+servers:
+  - name: sequential-thinking
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-sequential-thinking"
 ```
 
 ### Configuration Format
 
-The configuration file supports two formats:
+The configuration file uses YAML format:
 
-#### New Format (Recommended)
-
-```json
-{
-  "servers": [
-    {
-      "name": "server-name",
-      "command": "path-to-server-binary", 
-      "args": ["--flag1", "value1"],
-      "env": {
-        "ENV_VAR": "value"
-      }
-    }
-  ]
-}
+```yaml
+servers:
+  - name: server-name
+    command: path-to-server-binary
+    args:
+      - --flag1
+      - value1
+    env:
+      ENV_VAR: value
 ```
-
-#### Legacy Format (Still Supported)
-
-```json
-{
-  "mcpServers": {
-    "server-name": {
-      "command": "path-to-server-binary",
-      "args": ["--flag1", "value1"], 
-      "env": {
-        "ENV_VAR": "value"
-      }
-    }
-  }
-}
-```
-
-Both formats can be used simultaneously in the same configuration file.
 
 ## Usage
 
@@ -90,21 +63,17 @@ MCP servers are automatically discovered and their tools made available to the A
 
 ### Custom Server Example
 
-To add a custom MCP server, edit the configuration file at `~/.config/kubectl-ai/mcp.json`:
+To add a custom MCP server, edit the configuration file at `~/.config/kubectl-ai/mcp.yaml`:
 
-```json
-{
-  "servers": [
-    {
-      "name": "custom-server",
-      "command": "/path/to/your/mcp-server", 
-      "args": ["--port", "8080"],
-      "env": {
-        "CUSTOM_VAR": "value"
-      }
-    }
-  ]
-}
+```yaml
+servers:
+  - name: custom-server
+    command: /path/to/your/mcp-server
+    args:
+      - --port
+      - "8080"
+    env:
+      CUSTOM_VAR: value
 ```
 
 ### Environment Variables
@@ -152,13 +121,13 @@ The `Manager` struct manages multiple MCP client connections. It provides:
 
 ### Configuration
 
-The `Config` struct handles loading and saving MCP server configurations from disk. The configuration is automatically loaded from `~/.config/kubectl-ai/mcp.json` when needed.
+The `Config` struct handles loading and saving MCP server configurations from disk. The configuration is automatically loaded from `~/.config/kubectl-ai/mcp.yaml` when needed.
 
 ## Integration with kubectl-ai
 
 The MCP client is integrated with `kubectl-ai` to automatically discover and use tools from configured MCP servers. The system:
 
-1. **Loads configuration** from `~/.config/kubectl-ai/mcp.json` on startup
+1. **Loads configuration** from `~/.config/kubectl-ai/mcp.yaml` on startup
 2. **Connects synchronously** to all configured MCP servers (when `--mcp-client` flag is used)
 3. **Registers tools** before the conversation starts, ensuring they're immediately available
 4. **Converts parameters** automatically using generic snake_case → camelCase conversion
@@ -178,7 +147,7 @@ The MCP client is integrated with `kubectl-ai` to automatically discover and use
 
 **No MCP tools available:**
 - Ensure you're using the `--mcp-client` flag
-- Check that `~/.config/kubectl-ai/mcp.json` exists and is valid
+- Check that `~/.config/kubectl-ai/mcp.yaml` exists and is valid
 - Verify MCP servers are installed (e.g., `npx` commands work)
 
 **Connection failures:**

@@ -218,23 +218,20 @@ By default, `kubectl-ai` comes pre-configured with useful MCP server:
 
 ### Configuration
 
-Create or edit `~/.config/kubectl-ai/mcp.json` to customize MCP servers:
+Create or edit `~/.config/kubectl-ai/mcp.yaml` to customize MCP servers:
 
-```json
-{
-  "servers": [
-    {
-      "name": "sequential-thinking",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
-    },
-    {
-      "name": "custom-server",
-      "command": "/path/to/your/mcp-server",
-      "args": ["--arg1", "value1"]
-    }
-  ]
-}
+```yaml
+servers:
+  - name: sequential-thinking
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-sequential-thinking"
+  - name: custom-server
+    command: /path/to/your/mcp-server
+    args:
+      - --arg1
+      - value1
 ```
 
 The system automatically:
