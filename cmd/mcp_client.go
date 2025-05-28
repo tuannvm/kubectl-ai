@@ -16,6 +16,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/mcp"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
@@ -23,23 +25,14 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// GetMCPServerStatus returns a slice of text blocks with the current MCP server status
-// This function is called to display MCP server information in the UI
-func GetMCPServerStatus() ([]ui.Block, error) {
-	return GetMCPServerStatusWithClientMode(false)
-}
-
-// GetMCPServerStatusWithClientMode returns a slice of text blocks with the current MCP server status
-// mcpClientEnabled indicates whether MCP client mode is active
+// GetMCPServerStatusWithClientMode returns UI blocks showing MCP server status
 func GetMCPServerStatusWithClientMode(mcpClientEnabled bool) ([]ui.Block, error) {
 	ctx := context.Background()
-
-	// Get MCPManager instance if client mode is enabled
 	var status *mcp.MCPStatus
 	var err error
 
 	if mcpClientEnabled {
-		// Get the existing manager
+		// In client mode, use the existing manager
 		mcpManager := tools.GetMCPManager()
 		if mcpManager != nil {
 			status, err = mcpManager.GetStatus(ctx, mcpClientEnabled)
@@ -48,11 +41,10 @@ func GetMCPServerStatusWithClientMode(mcpClientEnabled bool) ([]ui.Block, error)
 				return nil, err
 			}
 		} else {
-			// Manager should be available but isn't, create empty status
 			status = &mcp.MCPStatus{ClientEnabled: mcpClientEnabled}
 		}
 	} else {
-		// In non-client mode, create a temporary manager just for the status
+		// In non-client mode, create a temporary manager
 		tmpManager := &mcp.Manager{}
 		status, err = tmpManager.GetStatus(ctx, mcpClientEnabled)
 		if err != nil {
@@ -61,26 +53,95 @@ func GetMCPServerStatusWithClientMode(mcpClientEnabled bool) ([]ui.Block, error)
 		}
 	}
 
-	// Convert the status into UI blocks and return
-	return GenerateMCPStatusBlocks(status), nil
+	return formatMCPStatus(status), nil
 }
 
-// StartMCPServer starts the MCP server with the given configuration
-func StartMCPServer(ctx context.Context, opt Options) error {
-	return startMCPServer(ctx, opt)
+// formatMCPStatus converts an MCP status into UI blocks for display
+func formatMCPStatus(status *mcp.MCPStatus) []ui.Block {
+	var blocks []ui.Block
+
+	// Add summary block
+	blocks = append(blocks, createSummaryBlock(status))
+
+	// Add server details blocks
+	if len(status.ServerInfoList) > 0 {
+		for _, server := range status.ServerInfoList {
+			blocks = append(blocks, createServerBlock(server))
+		}
+	}
+
+	return blocks
 }
 
-// LoadMCPConfig loads and logs the MCP configuration
-func LoadMCPConfig() {
-	mcpConfigPath, err := mcp.DefaultConfigPath()
-	if err != nil {
-		klog.Warningf("Failed to get MCP config path: %v", err)
-		return
+// createSummaryBlock creates a summary block for MCP status
+func createSummaryBlock(status *mcp.MCPStatus) ui.Block {
+	var summaryText string
+
+	if status.ClientEnabled && status.ConnectedCount > 0 {
+		summaryText = fmt.Sprintf("\n  Successfully connected to %d MCP server(s) (%d tools discovered)\n",
+			status.ConnectedCount, status.TotalTools)
+	} else if status.ClientEnabled {
+		summaryText = "\n  No MCP servers connected\n"
+	} else if status.TotalServers > 0 {
+		summaryText = fmt.Sprintf("\n  %d MCP servers configured (client mode disabled)\n",
+			status.TotalServers)
+	} else {
+		summaryText = "\n  No MCP servers configured\n"
 	}
 
-	// Create a temporary Manager instance to call LogConfig
-	manager := &mcp.Manager{}
-	if err := manager.LogConfig(mcpConfigPath); err != nil {
-		klog.Warningf("Failed to load or log MCP config: %v", err)
+	block := ui.NewAgentTextBlock()
+	block.SetText(summaryText)
+	return block
+}
+
+// createServerBlock creates a UI block for a single MCP server
+func createServerBlock(server mcp.ServerConnectionInfo) ui.Block {
+	// Get connection status
+	connectionStatus := "Disconnected"
+	if server.IsConnected {
+		connectionStatus = "Connected"
 	}
+
+	// Get tool names if available
+	var toolNames []string
+	if server.IsConnected && len(server.AvailableTools) > 0 {
+		for _, tool := range server.AvailableTools {
+			toolNames = append(toolNames, tool.Name)
+		}
+	}
+
+	// Format server details with clean spacing
+	var details strings.Builder
+	details.WriteString("\n\n") // Double newline for spacing between servers
+
+	// Build server info line
+	details.WriteString("    • ") // Bullet point with indentation
+	details.WriteString(fmt.Sprintf("%s (%s) - %s",
+		server.Name,
+		extractCommandName(server.Command),
+		connectionStatus))
+
+	if len(toolNames) > 0 {
+		details.WriteString(fmt.Sprintf(", Tools: %s", strings.Join(toolNames, ", ")))
+	}
+
+	details.WriteString("\n\n") // Add spacing after the server details
+
+	block := ui.NewAgentTextBlock()
+	block.SetText(details.String())
+	return block
+}
+
+// extractCommandName gets the base command from a command string
+func extractCommandName(command string) string {
+	if command == "" {
+		return "unknown"
+	}
+
+	parts := strings.Fields(command)
+	if len(parts) > 0 {
+		return parts[0]
+	}
+
+	return command
 }
