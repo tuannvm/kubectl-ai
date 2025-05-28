@@ -291,7 +291,7 @@ func (m *Manager) GetStatus(ctx context.Context, mcpClientEnabled bool) (*MCPSta
 		return status, nil // Return empty status
 	}
 
-	status.TotalServers = len(mcpConfig.Servers) + len(mcpConfig.MCPServers)
+	status.TotalServers = len(mcpConfig.Servers)
 
 	if status.TotalServers == 0 {
 		return status, nil
@@ -328,7 +328,7 @@ func (m *Manager) GetStatus(ctx context.Context, mcpClientEnabled bool) (*MCPSta
 		}
 	}
 
-	// Process standard servers
+	// Process all servers
 	for _, server := range mcpConfig.Servers {
 		serverInfo := ServerConnectionInfo{
 			Name:        server.Name,
@@ -338,27 +338,6 @@ func (m *Manager) GetStatus(ctx context.Context, mcpClientEnabled bool) (*MCPSta
 		}
 
 		if tools, exists := serverTools[server.Name]; exists {
-			serverInfo.AvailableTools = tools
-		}
-
-		status.ServerInfoList = append(status.ServerInfoList, serverInfo)
-	}
-
-	// Process legacy servers
-	for name, server := range mcpConfig.MCPServers {
-		serverName := name
-		if server.Name != "" {
-			serverName = server.Name
-		}
-
-		serverInfo := ServerConnectionInfo{
-			Name:        serverName,
-			Command:     server.Command,
-			IsLegacy:    true,
-			IsConnected: connectedServerNames[serverName],
-		}
-
-		if tools, exists := serverTools[serverName]; exists {
 			serverInfo.AvailableTools = tools
 		}
 
@@ -384,8 +363,7 @@ func (m *Manager) LogConfig(mcpConfigPath string) error {
 	}
 
 	serverCount := len(mcpConfig.Servers)
-	legacyServerCount := len(mcpConfig.MCPServers)
-	totalServers := serverCount + legacyServerCount
+	totalServers := serverCount
 
 	if totalServers > 0 {
 		serverWord := "server"
@@ -401,14 +379,6 @@ func (m *Manager) LogConfig(mcpConfigPath string) error {
 
 		for _, server := range mcpConfig.Servers {
 			klog.V(2).Infof("  - %s: %s", server.Name, server.Command)
-		}
-
-		for name, server := range mcpConfig.MCPServers {
-			serverName := name
-			if server.Name != "" {
-				serverName = server.Name
-			}
-			klog.V(2).Infof("  - %s: %s (legacy)", serverName, server.Command)
 		}
 	}
 

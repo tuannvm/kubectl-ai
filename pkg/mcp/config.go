@@ -15,39 +15,37 @@
 package mcp
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/yaml"
 )
 
 // ServerConfig represents the configuration for an MCP server
 type ServerConfig struct {
 	// Name is a friendly name for this MCP server
-	Name string `json:"name"`
+	Name string `yaml:"name"`
 	// Command is the command to execute for stdio-based MCP servers
-	Command string `json:"command"`
+	Command string `yaml:"command"`
 	// Args are the arguments to pass to the command
-	Args []string `json:"args,omitempty"`
+	Args []string `yaml:"args,omitempty"`
 	// Env are the environment variables to set for the command
-	Env map[string]string `json:"env,omitempty"`
+	Env map[string]string `yaml:"env,omitempty"`
 }
 
 // Config represents the MCP client configuration file
 type Config struct {
 	// Servers is a list of MCP server configurations
-	Servers []ServerConfig `json:"servers,omitempty"`
-	// Legacy field for backward compatibility with mcpServers format
-	MCPServers map[string]ServerConfig `json:"mcpServers,omitempty"`
+	Servers []ServerConfig `yaml:"servers,omitempty"`
 }
 
 // loadDefaultConfig loads the default configuration from the embedded file
 func loadDefaultConfig() (*Config, error) {
 	// This path is relative to the module root
-	defaultConfigPath := filepath.Join("pkg", "mcp", "default_config.json")
+	defaultConfigPath := filepath.Join("pkg", "mcp", "default_config.yaml")
 
 	// Read the file
 	data, err := os.ReadFile(defaultConfigPath)
@@ -56,7 +54,7 @@ func loadDefaultConfig() (*Config, error) {
 	}
 
 	var config Config
-	if err := json.Unmarshal(data, &config); err != nil {
+	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("parsing default config: %w", err)
 	}
 
@@ -72,36 +70,23 @@ func DefaultConfigPath() (string, error) {
 	}
 
 	var configPath string
-	var oldConfigPath string
 
 	// Handle different operating systems
 	switch runtime.GOOS {
 	case "windows":
-		// On Windows, use %APPDATA%\kubectl-ai\mcp.json
+		// On Windows, use %APPDATA%\kubectl-ai\mcp.yaml
 		appData := os.Getenv("APPDATA")
 		if appData == "" {
 			appData = filepath.Join(home, "AppData", "Roaming")
 		}
-		configPath = filepath.Join(appData, "kubectl-ai", "mcp.json")
-		oldConfigPath = filepath.Join(home, ".kube", "mcp-config.json")
+		configPath = filepath.Join(appData, "kubectl-ai", "mcp.yaml")
 	default:
-		// On Unix-like systems, use XDG_CONFIG_HOME/kubectl-ai/mcp.json
+		// On Unix-like systems, use XDG_CONFIG_HOME/kubectl-ai/mcp.yaml
 		configDir := os.Getenv("XDG_CONFIG_HOME")
 		if configDir == "" {
 			configDir = filepath.Join(home, ".config")
 		}
-		configPath = filepath.Join(configDir, "kubectl-ai", "mcp.json")
-		oldConfigPath = filepath.Join(home, ".kube", "mcp-config.json")
-	}
-
-	// For backward compatibility, check if the old config exists
-	if _, err := os.Stat(oldConfigPath); err == nil {
-		// If the old config exists, move it to the new location
-		if err := os.MkdirAll(filepath.Dir(configPath), ConfigDirPermissions); err == nil {
-			if err := os.Rename(oldConfigPath, configPath); err == nil {
-				klog.V(2).Info("Migrated MCP config to new location", "oldPath", oldConfigPath, "newPath", configPath)
-			}
-		}
+		configPath = filepath.Join(configDir, "kubectl-ai", "mcp.yaml")
 	}
 
 	return configPath, nil
@@ -147,21 +132,8 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	var config Config
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("parsing config file: %w", err)
-	}
-
-	// Handle legacy migration if needed
-	if config.NeedsLegacyMigration() {
-		klog.V(2).Info("Migrating MCP config from legacy format", "path", path)
-		config.MigrateFromLegacy()
-
-		// Save the migrated configuration
-		if err := config.Save(path); err != nil {
-			klog.Warningf("Failed to save migrated MCP config: %v", err)
-		} else {
-			klog.V(2).Info("Successfully migrated and saved MCP config")
-		}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("parsing YAML config file: %w", err)
 	}
 
 	// Validate the configuration
@@ -187,8 +159,8 @@ func (c *Config) Save(path string) error {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 
-	// Marshal the servers (ignore legacy MCPServers field)
-	data, err := c.marshalForSave()
+	// Marshal the config to YAML
+	data, err := yaml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
@@ -200,18 +172,6 @@ func (c *Config) Save(path string) error {
 
 	klog.V(2).Info("Saved MCP configuration", "path", path)
 	return nil
-}
-
-// marshalForSave marshals the config for saving, excluding legacy fields
-func (c *Config) marshalForSave() ([]byte, error) {
-	// Create a clean config with only the current format
-	saveConfig := struct {
-		Servers []ServerConfig `json:"servers"`
-	}{
-		Servers: c.Servers,
-	}
-
-	return json.MarshalIndent(saveConfig, "", "  ")
 }
 
 // atomicWriteFile writes data to a file atomically using a temporary file
@@ -320,28 +280,4 @@ func ValidateServerConfig(config ServerConfig) error {
 	// - Check argument validity
 
 	return nil
-}
-
-// NeedsLegacyMigration checks if the config needs migration from legacy format
-func (c *Config) NeedsLegacyMigration() bool {
-	return len(c.MCPServers) > 0 && len(c.Servers) == 0
-}
-
-// MigrateFromLegacy migrates configuration from legacy MCPServers format
-func (c *Config) MigrateFromLegacy() {
-	if !c.NeedsLegacyMigration() {
-		return
-	}
-
-	c.Servers = make([]ServerConfig, 0, len(c.MCPServers))
-	for name, serverCfg := range c.MCPServers {
-		// Set the name from the map key if not already set
-		if serverCfg.Name == "" {
-			serverCfg.Name = name
-		}
-		c.Servers = append(c.Servers, serverCfg)
-	}
-
-	// Clear the legacy field
-	c.MCPServers = nil
 }
