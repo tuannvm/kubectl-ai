@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -240,4 +241,135 @@ func (c *Client) ensureConnected() error {
 		return fmt.Errorf("not connected to MCP server")
 	}
 	return nil
+}
+
+// =============================================================================
+// MCP Tool Helper Functions
+// =============================================================================
+
+// FunctionDefinition is an interface representing generic function schema definitions
+// This allows the MCP package to create schemas without directly depending on gollm
+type FunctionDefinition interface {
+	// Schema returns a representation of the function schema
+	Schema() any
+}
+
+// SchemaProperty is an interface representing generic schema properties
+type SchemaProperty interface {
+	// Property returns a representation of the schema property
+	Property() any
+}
+
+// SchemaBuilder is a function that builds a function definition from a tool
+type SchemaBuilder func(tool *Tool) (FunctionDefinition, error)
+
+// ConvertArgs handles all argument conversions for MCP tools.
+// It transforms keys from snake_case to camelCase and converts values to appropriate types.
+func ConvertArgs(args map[string]any) map[string]any {
+	if len(args) == 0 {
+		return args
+	}
+
+	result := make(map[string]any, len(args))
+
+	for key, value := range args {
+		// Convert key from snake_case to camelCase
+		camelKey := SnakeToCamel(key)
+
+		// Convert value based on key name patterns
+		result[camelKey] = ConvertValue(camelKey, value)
+	}
+
+	return result
+}
+
+// SnakeToCamel converts a snake_case string to camelCase.
+func SnakeToCamel(s string) string {
+	if !strings.Contains(s, "_") {
+		return s
+	}
+
+	parts := strings.Split(s, "_")
+	result := parts[0]
+
+	for _, part := range parts[1:] {
+		if len(part) > 0 {
+			result += strings.ToUpper(part[:1]) + part[1:]
+		}
+	}
+
+	return result
+}
+
+// ConvertValue infers and converts a value to an appropriate type based on the parameter name.
+func ConvertValue(paramName string, value any) any {
+	// Already primitive types that don't need conversion
+	switch value.(type) {
+	case bool, int, int32, int64, float32, float64:
+		return value
+	}
+
+	name := strings.ToLower(paramName)
+
+	// Number parameter detection
+	if IsNumberParam(name) {
+		if str, ok := value.(string); ok {
+			// Try integer conversion first
+			if num, err := strconv.Atoi(str); err == nil {
+				return num
+			}
+			// Then try float conversion
+			if num, err := strconv.ParseFloat(str, 64); err == nil {
+				return num
+			}
+		} else if f, ok := value.(float64); ok && f == float64(int(f)) {
+			// Convert whole number floats to int
+			return int(f)
+		}
+	}
+
+	// Boolean parameter detection
+	if IsBoolParam(name) {
+		if str, ok := value.(string); ok {
+			if b, err := strconv.ParseBool(str); err == nil {
+				return b
+			}
+		} else if n, ok := value.(int); ok {
+			return n != 0
+		}
+	}
+
+	return value
+}
+
+// IsNumberParam checks if a parameter name suggests a numeric value.
+func IsNumberParam(name string) bool {
+	numberPatterns := []string{"number", "count", "total", "max", "min", "limit"}
+	for _, pattern := range numberPatterns {
+		if strings.Contains(name, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsBoolParam checks if a parameter name suggests a boolean value.
+func IsBoolParam(name string) bool {
+	// Prefix checks
+	boolPrefixes := []string{"is", "has", "needs", "enable"}
+	for _, prefix := range boolPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+
+	// Contains checks
+	boolPatterns := []string{"required", "enabled"}
+	for _, pattern := range boolPatterns {
+		if strings.Contains(name, pattern) {
+			return true
+		}
+	}
+
+	return false
 }

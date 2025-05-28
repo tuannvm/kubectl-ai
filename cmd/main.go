@@ -325,7 +325,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	var mcpManager *mcp.Manager
 	if opt.MCPClient {
 		var err error
-		mcpManager, err = tools.InitializeMCPClient()
+		mcpManager, err = InitializeMCPClient()
 		if err != nil {
 			klog.Errorf("Failed to initialize MCP client: %v", err)
 			os.Exit(1) // Fail fast instead of continuing with degraded functionality

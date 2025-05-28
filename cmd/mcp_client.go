@@ -20,9 +20,44 @@ import (
 	"strings"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/mcp"
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui"
 	"k8s.io/klog/v2"
 )
+
+// InitializeMCPClient initializes MCP client functionality when --mcp-client flag is used.
+// It connects to servers and registers discovered tools with the kubectl-ai tool system.
+func InitializeMCPClient() (*mcp.Manager, error) {
+	// Initialize the MCP manager
+	manager, err := mcp.InitializeManager()
+	if err != nil {
+		return nil, err
+	}
+
+	// Connect to servers and register tools
+	ctx := context.Background()
+	err = manager.RegisterWithToolSystem(ctx, func(serverName string, toolInfo mcp.Tool) error {
+		// Create schema for the tool
+		schema, err := tools.ConvertToolToGollm(&mcp.Tool{
+			Name:        toolInfo.Name,
+			Description: toolInfo.Description,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Create and register MCP tool wrapper
+		mcpTool := tools.NewMCPTool(serverName, toolInfo.Name, toolInfo.Description, schema, manager)
+		tools.RegisterTool(mcpTool)
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return manager, nil
+}
 
 // GetMCPServerStatusWithClientMode returns UI blocks showing MCP server status
 func GetMCPServerStatusWithClientMode(mcpClientEnabled bool, mcpManager *mcp.Manager) ([]ui.Block, error) {

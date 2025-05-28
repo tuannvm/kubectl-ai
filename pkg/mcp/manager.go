@@ -418,3 +418,25 @@ func (m *Manager) LogConfig(mcpConfigPath string) error {
 // ToolInfo is an alias for Tool to maintain backward compatibility
 // Deprecated: Use Tool instead
 type ToolInfo = Tool
+
+// =============================================================================
+// Integration Methods
+// =============================================================================
+
+// RegisterWithToolSystem connects to MCP servers and registers discovered tools with an external tool system
+// using the provided callback function. This simplifies integration with kubectl-ai's tool system.
+func (m *Manager) RegisterWithToolSystem(ctx context.Context, registerCallback func(serverName string, tool Tool) error) error {
+	klog.V(1).Info("Initializing MCP client functionality and registering tools")
+
+	// Connect to all configured servers
+	if err := m.DiscoverAndConnectServers(ctx); err != nil {
+		return fmt.Errorf("MCP server connection failed: %w", err)
+	}
+
+	// Register all discovered tools using the callback
+	if err := m.RegisterTools(ctx, registerCallback); err != nil {
+		return fmt.Errorf("MCP tool registration failed: %w", err)
+	}
+
+	return nil
+}
