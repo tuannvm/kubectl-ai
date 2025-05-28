@@ -40,6 +40,7 @@ type Client struct {
 }
 
 // NewClient creates a new MCP client with the given configuration
+// TODO(tuannvm): add support for HTTP streamable MCP servers
 func NewClient(name, command string, args []string, env map[string]string) *Client {
 	// Convert env map to slice of KEY=value strings
 	var envSlice []string

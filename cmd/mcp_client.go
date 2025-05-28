@@ -76,14 +76,6 @@ func GetMCPServerStatusWithClientMode(mcpClientEnabled bool, mcpManager *mcp.Man
 		} else {
 			status = &mcp.MCPStatus{ClientEnabled: mcpClientEnabled}
 		}
-	} else {
-		// In non-client mode, create a temporary manager
-		tmpManager := &mcp.Manager{}
-		status, err = tmpManager.GetStatus(ctx, mcpClientEnabled)
-		if err != nil {
-			klog.Errorf("Failed to get MCP server status: %v", err)
-			return nil, err
-		}
 	}
 
 	return formatMCPStatus(status), nil
