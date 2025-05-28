@@ -374,20 +374,6 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 
 	doc := ui.NewDocument()
 
-	// Show MCP server status in the welcome message only when MCP client is enabled
-	if opt.MCPClient {
-		if mcpBlocks, err := GetMCPServerStatusWithClientMode(opt.MCPClient); err == nil && len(mcpBlocks) > 0 {
-			doc.AddBlock(ui.NewAgentTextBlock().WithText("\nMCP Server Status:"))
-			for _, block := range mcpBlocks {
-				doc.AddBlock(block)
-			}
-			// Log MCP server status to log file
-			klog.Info("MCP server status retrieved successfully for welcome message")
-		} else if err != nil {
-			klog.Warningf("Failed to retrieve MCP server status for welcome message: %v", err)
-		}
-	}
-
 	var userInterface ui.UI
 	switch opt.UserInterface {
 	case UserInterfaceTerminal:
@@ -450,14 +436,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		LLM:          llmClient,
 	}
 
-	if opt.Quiet {
-		if queryFromCmd == "" {
-			return fmt.Errorf("quiet mode requires a query to be provided as a positional argument")
-		}
-		return chatSession.answerQuery(ctx, queryFromCmd)
-	}
-
-	// Prepare MCP blocks for startup only when MCP client is enabled
+	// Prepare MCP server status blocks only when MCP client is enabled
 	var mcpBlocks []ui.Block
 	if opt.MCPClient {
 		if blocks, err := GetMCPServerStatusWithClientMode(opt.MCPClient); err == nil && len(blocks) > 0 {
@@ -469,6 +448,13 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		} else if err != nil {
 			klog.Warningf("Failed to retrieve MCP server status for REPL startup: %v", err)
 		}
+	}
+
+	if opt.Quiet {
+		if queryFromCmd == "" {
+			return fmt.Errorf("quiet mode requires a query to be provided as a positional argument")
+		}
+		return chatSession.answerQuery(ctx, queryFromCmd)
 	}
 
 	return chatSession.repl(ctx, queryFromCmd, mcpBlocks)
