@@ -25,8 +25,6 @@ import (
 	"k8s.io/klog/v2"
 )
 
-var mcpManager *mcp.Manager
-
 // =============================================================================
 // Schema Conversion Functions (kubectl-ai specific)
 // =============================================================================
@@ -52,12 +50,6 @@ func convertToolToGollm(mcpTool *mcp.Tool) (*gollm.FunctionDefinition, error) {
 // =============================================================================
 // MCP Tool Implementation
 // =============================================================================
-
-// init function is kept minimal - MCP initialization is handled by --mcp-client flag
-func init() {
-	// MCP client initialization will be handled via explicit --mcp-client flag
-	// No automatic discovery in init() to ensure proper control flow
-}
 
 // MCPTool wraps an MCP server tool to implement the Tool interface
 type MCPTool struct {
@@ -218,13 +210,13 @@ func convertToBoolean(value any) any {
 // =============================================================================
 
 // registerToolsFromConnectedServers discovers tools from all connected MCP servers and registers them
-func registerToolsFromConnectedServers(ctx context.Context) error {
-	if mcpManager == nil {
+func registerToolsFromConnectedServers(ctx context.Context, manager *mcp.Manager) error {
+	if manager == nil {
 		return nil
 	}
 
 	// Discover tools from connected servers
-	serverTools, err := mcpManager.RefreshToolDiscovery(ctx)
+	serverTools, err := manager.RefreshToolDiscovery(ctx)
 	if err != nil {
 		return err
 	}
@@ -243,7 +235,7 @@ func registerToolsFromConnectedServers(ctx context.Context) error {
 			}
 
 			// Create MCP tool wrapper
-			mcpTool := NewMCPTool(serverName, toolInfo.Name, toolInfo.Description, schema, mcpManager)
+			mcpTool := NewMCPTool(serverName, toolInfo.Name, toolInfo.Description, schema, manager)
 
 			// Register with the tools system
 			RegisterTool(mcpTool)
@@ -259,43 +251,36 @@ func registerToolsFromConnectedServers(ctx context.Context) error {
 }
 
 // InitializeMCPClient explicitly initializes MCP client functionality when --mcp-client flag is used
-func InitializeMCPClient() error {
+func InitializeMCPClient() (*mcp.Manager, error) {
 	// Initialize the MCP manager using the new pkg/mcp functions
 	manager, err := mcp.InitializeManager()
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	mcpManager = manager
 
 	// Start connection and tool discovery synchronously to ensure tools are available before conversation starts
 	ctx := context.Background()
 
 	// Connect to servers
-	if err := mcpManager.DiscoverAndConnectServers(ctx); err != nil {
+	if err := manager.DiscoverAndConnectServers(ctx); err != nil {
 		klog.V(2).Info("MCP server connection failed", "error", err)
-		return fmt.Errorf("MCP server connection failed: %w", err)
+		return nil, fmt.Errorf("MCP server connection failed: %w", err)
 	}
 
 	// Register discovered tools
-	if err := registerToolsFromConnectedServers(ctx); err != nil {
+	if err := registerToolsFromConnectedServers(ctx, manager); err != nil {
 		klog.V(2).Info("MCP tool registration failed", "error", err)
-		return fmt.Errorf("MCP tool registration failed: %w", err)
+		return nil, fmt.Errorf("MCP tool registration failed: %w", err)
 	}
 
-	return nil
-}
-
-// GetMCPManager returns the global MCP manager instance (for UI integration)
-func GetMCPManager() *mcp.Manager {
-	return mcpManager
+	return manager, nil
 }
 
 // RefreshMCPTools forces a refresh of MCP tools (for manual refresh scenarios)
-func RefreshMCPTools(ctx context.Context) error {
-	if mcpManager == nil {
+func RefreshMCPTools(ctx context.Context, manager *mcp.Manager) error {
+	if manager == nil {
 		return fmt.Errorf("MCP manager not initialized")
 	}
 
-	return registerToolsFromConnectedServers(ctx)
+	return registerToolsFromConnectedServers(ctx, manager)
 }

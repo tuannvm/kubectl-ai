@@ -33,6 +33,7 @@ import (
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/agent"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/mcp"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui/html"
@@ -321,8 +322,11 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	}
 
 	// Initialize MCP client if requested
+	var mcpManager *mcp.Manager
 	if opt.MCPClient {
-		if err := tools.InitializeMCPClient(); err != nil {
+		var err error
+		mcpManager, err = tools.InitializeMCPClient()
+		if err != nil {
 			klog.Errorf("Failed to initialize MCP client: %v", err)
 			os.Exit(1) // Fail fast instead of continuing with degraded functionality
 		} else {
@@ -434,12 +438,13 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		ui:           userInterface,
 		conversation: conversation,
 		LLM:          llmClient,
+		mcpManager:   mcpManager,
 	}
 
 	// Prepare MCP server status blocks only when MCP client is enabled
 	var mcpBlocks []ui.Block
 	if opt.MCPClient {
-		if blocks, err := GetMCPServerStatusWithClientMode(opt.MCPClient); err == nil && len(blocks) > 0 {
+		if blocks, err := GetMCPServerStatusWithClientMode(opt.MCPClient, mcpManager); err == nil && len(blocks) > 0 {
 			header := ui.NewAgentTextBlock().WithText("\nMCP Server Status:")
 			mcpBlocks = append(mcpBlocks, header)
 			mcpBlocks = append(mcpBlocks, blocks...)
@@ -507,6 +512,7 @@ type session struct {
 	conversation    *agent.Conversation
 	availableModels []string
 	LLM             gollm.Client
+	mcpManager      *mcp.Manager
 }
 
 // repl is a read-eval-print loop for the chat session.

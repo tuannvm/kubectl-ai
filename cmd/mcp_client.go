@@ -20,20 +20,18 @@ import (
 	"strings"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/mcp"
-	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui"
 	"k8s.io/klog/v2"
 )
 
 // GetMCPServerStatusWithClientMode returns UI blocks showing MCP server status
-func GetMCPServerStatusWithClientMode(mcpClientEnabled bool) ([]ui.Block, error) {
+func GetMCPServerStatusWithClientMode(mcpClientEnabled bool, mcpManager *mcp.Manager) ([]ui.Block, error) {
 	ctx := context.Background()
 	var status *mcp.MCPStatus
 	var err error
 
 	if mcpClientEnabled {
-		// In client mode, use the existing manager
-		mcpManager := tools.GetMCPManager()
+		// In client mode, use the provided manager
 		if mcpManager != nil {
 			status, err = mcpManager.GetStatus(ctx, mcpClientEnabled)
 			if err != nil {
@@ -144,4 +142,19 @@ func extractCommandName(command string) string {
 	}
 
 	return command
+}
+
+// LoadMCPConfig loads and logs the MCP configuration
+func LoadMCPConfig() {
+	mcpConfigPath, err := mcp.DefaultConfigPath()
+	if err != nil {
+		klog.Warningf("Failed to get MCP config path: %v", err)
+		return
+	}
+
+	// Create a temporary Manager instance to call LogConfig
+	manager := &mcp.Manager{}
+	if err := manager.LogConfig(mcpConfigPath); err != nil {
+		klog.Warningf("Failed to load or log MCP config: %v", err)
+	}
 }
