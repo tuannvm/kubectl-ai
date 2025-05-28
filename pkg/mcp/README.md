@@ -145,9 +145,9 @@ The MCP client is integrated with `kubectl-ai` to automatically discover and use
 
 ### Common Issues
 
-**No MCP tools available:**
+**MCP tools are not available:**
 - Ensure you're using the `--mcp-client` flag
-- Check that `~/.config/kubectl-ai/mcp.yaml` exists and is valid
+- Check that `~/.config/kubectl-ai/mcp.yaml` exists and is valid (created by default)
 - Verify MCP servers are installed (e.g., `npx` commands work)
 
 **Connection failures:**
