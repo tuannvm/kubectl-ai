@@ -385,10 +385,6 @@ func (m *Manager) LogConfig(mcpConfigPath string) error {
 	return nil
 }
 
-// ToolInfo is an alias for Tool to maintain backward compatibility
-// Deprecated: Use Tool instead
-type ToolInfo = Tool
-
 // =============================================================================
 // Integration Methods
 // =============================================================================

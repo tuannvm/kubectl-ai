@@ -211,37 +211,6 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	return os.Rename(tmpPath, path)
 }
 
-// AddServer adds a new server configuration
-func (c *Config) AddServer(name, command string, args []string, env map[string]string) {
-	c.Servers = append(c.Servers, ServerConfig{
-		Name:    name,
-		Command: command,
-		Args:    args,
-		Env:     env,
-	})
-}
-
-// RemoveServer removes a server configuration by name
-func (c *Config) RemoveServer(name string) bool {
-	for i, server := range c.Servers {
-		if server.Name == name {
-			c.Servers = append(c.Servers[:i], c.Servers[i+1:]...)
-			return true
-		}
-	}
-	return false
-}
-
-// GetServer returns a server configuration by name
-func (c *Config) GetServer(name string) (*ServerConfig, bool) {
-	for _, server := range c.Servers {
-		if server.Name == name {
-			return &server, true
-		}
-	}
-	return nil, false
-}
-
 // ValidateConfig validates the entire configuration
 func (c *Config) ValidateConfig() error {
 	if len(c.Servers) == 0 {
