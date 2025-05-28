@@ -242,6 +242,34 @@ func (m *Manager) RefreshToolDiscovery(ctx context.Context) (map[string][]Tool, 
 	return serverTools, nil
 }
 
+// RegisterTools discovers and registers tools from all MCP servers using the provided callback
+// The callback function is responsible for creating and registering tool wrappers
+func (m *Manager) RegisterTools(ctx context.Context, registerCallback func(serverName string, tool Tool) error) error {
+	// Discover tools from connected servers
+	serverTools, err := m.RefreshToolDiscovery(ctx)
+	if err != nil {
+		return err
+	}
+
+	toolCount := 0
+	for serverName, tools := range serverTools {
+		for _, toolInfo := range tools {
+			// Use the callback to register each tool
+			if err := registerCallback(serverName, toolInfo); err != nil {
+				klog.Warningf("Failed to register tool %s from server %s: %v", toolInfo.Name, serverName, err)
+				continue
+			}
+			toolCount++
+		}
+	}
+
+	if toolCount > 0 {
+		klog.InfoS("Registered MCP tools", "totalTools", toolCount)
+	}
+
+	return nil
+}
+
 // =============================================================================
 // Status Reporting
 // =============================================================================

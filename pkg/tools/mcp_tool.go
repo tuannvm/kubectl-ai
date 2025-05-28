@@ -209,47 +209,6 @@ func convertToBoolean(value any) any {
 // MCP Integration Functions
 // =============================================================================
 
-// registerToolsFromConnectedServers discovers tools from all connected MCP servers and registers them
-func registerToolsFromConnectedServers(ctx context.Context, manager *mcp.Manager) error {
-	if manager == nil {
-		return nil
-	}
-
-	// Discover tools from connected servers
-	serverTools, err := manager.RefreshToolDiscovery(ctx)
-	if err != nil {
-		return err
-	}
-
-	toolCount := 0
-	for serverName, tools := range serverTools {
-		for _, toolInfo := range tools {
-			// Create schema for the tool
-			schema, err := convertToolToGollm(&mcp.Tool{
-				Name:        toolInfo.Name,
-				Description: toolInfo.Description,
-			})
-			if err != nil {
-				klog.Warningf("Failed to convert schema for tool %s from server %s: %v", toolInfo.Name, serverName, err)
-				continue
-			}
-
-			// Create MCP tool wrapper
-			mcpTool := NewMCPTool(serverName, toolInfo.Name, toolInfo.Description, schema, manager)
-
-			// Register with the tools system
-			RegisterTool(mcpTool)
-			toolCount++
-		}
-	}
-
-	if toolCount > 0 {
-		klog.InfoS("Registered MCP tools", "totalTools", toolCount)
-	}
-
-	return nil
-}
-
 // InitializeMCPClient explicitly initializes MCP client functionality when --mcp-client flag is used
 func InitializeMCPClient() (*mcp.Manager, error) {
 	// Initialize the MCP manager using the new pkg/mcp functions
@@ -267,8 +226,24 @@ func InitializeMCPClient() (*mcp.Manager, error) {
 		return nil, fmt.Errorf("MCP server connection failed: %w", err)
 	}
 
-	// Register discovered tools
-	if err := registerToolsFromConnectedServers(ctx, manager); err != nil {
+	// Register discovered tools using the RegisterTools method
+	if err := manager.RegisterTools(ctx, func(serverName string, toolInfo mcp.Tool) error {
+		// Create schema for the tool
+		schema, err := convertToolToGollm(&mcp.Tool{
+			Name:        toolInfo.Name,
+			Description: toolInfo.Description,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Create MCP tool wrapper
+		mcpTool := NewMCPTool(serverName, toolInfo.Name, toolInfo.Description, schema, manager)
+
+		// Register with the tools system
+		RegisterTool(mcpTool)
+		return nil
+	}); err != nil {
 		klog.V(2).Info("MCP tool registration failed", "error", err)
 		return nil, fmt.Errorf("MCP tool registration failed: %w", err)
 	}
@@ -282,5 +257,21 @@ func RefreshMCPTools(ctx context.Context, manager *mcp.Manager) error {
 		return fmt.Errorf("MCP manager not initialized")
 	}
 
-	return registerToolsFromConnectedServers(ctx, manager)
+	return manager.RegisterTools(ctx, func(serverName string, toolInfo mcp.Tool) error {
+		// Create schema for the tool
+		schema, err := convertToolToGollm(&mcp.Tool{
+			Name:        toolInfo.Name,
+			Description: toolInfo.Description,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Create MCP tool wrapper
+		mcpTool := NewMCPTool(serverName, toolInfo.Name, toolInfo.Description, schema, manager)
+
+		// Register with the tools system
+		RegisterTool(mcpTool)
+		return nil
+	})
 }
