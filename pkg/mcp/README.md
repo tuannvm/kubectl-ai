@@ -10,7 +10,7 @@ The MCP client allows `kubectl-ai` to connect to MCP servers, discover available
 
 - Connect to multiple MCP servers simultaneously
 - Automatic discovery of available tools from connected servers
-- Execute tools on remote MCP servers with parameter conversion
+- Execute tools on stdio-based MCP servers with parameter conversion
 - Configuration-based server management
 - Generic parameter name and type conversion (snake_case → camelCase, intelligent type inference)
 - Synchronous initialization ensuring tools are available before conversation starts
@@ -151,7 +151,7 @@ The MCP client is integrated with `kubectl-ai` to automatically discover and use
 - Verify MCP servers are installed (e.g., `npx` commands work)
 
 **Connection failures:**
-- Check network connectivity for remote servers
+- Check network connectivity
 - Ensure server commands and paths are correct in configuration
 - Verify environment variables are properly set
 

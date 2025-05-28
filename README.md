@@ -213,15 +213,14 @@ Enable MCP client mode:
 kubectl-ai --mcp-client
 ```
 
-By default, `kubectl-ai` comes pre-configured with useful MCP server:
-- **sequential-thinking**: Advanced reasoning and step-by-step analysis
-
 ### Configuration
 
 Create or edit `~/.config/kubectl-ai/mcp.yaml` to customize MCP servers:
 
 ```yaml
 servers:
+  # By default, `kubectl-ai` comes pre-configured with useful MCP server:
+  # sequential-thinking: Advanced reasoning and step-by-step analysis
   - name: sequential-thinking
     command: npx
     args:
@@ -241,7 +240,7 @@ The system automatically:
 
 No additional setup required - just use the `--mcp-client` flag and the AI will have access to all configured MCP tools.
 
-📖 **For detailed configuration options, troubleshooting, and advanced features, see the [MCP Documentation](pkg/mcp/README.md).**
+📖 **For detailed configuration options, troubleshooting, and advanced features for MCP Client mode, see the [MCP Client Documentation](pkg/mcp/README.md).**
 
 ## Extras
 
@@ -259,9 +258,19 @@ You can use the following special keywords for specific actions:
 
 You can also run `kubectl ai`. `kubectl` finds any executable file in your `PATH` whose name begins with `kubectl-` as a [plugin](https://kubernetes.io/docs/tasks/extend-kubectl/kubectl-plugins/).
 
-## MCP server
+## MCP Server Mode
 
-You can also use `kubectl-ai` as a MCP server that exposes `kubectl` as one of the tools to interact with locally configured k8s environment. See [mcp docs](./docs/mcp.md) for more details.
+`kubectl-ai` can also act as an MCP server that exposes `kubectl` as a tool for other MCP clients (like Claude, Cursor, or VS Code) to interact with your locally configured Kubernetes environment. 
+
+Enable MCP server mode:
+
+```bash
+kubectl-ai --mcp-server
+```
+
+This allows AI agents and tools to execute kubectl commands in your environment through the Model Context Protocol.
+
+📖 **For details on configuring kubectl-ai as an MCP server for use with Claude, Cursor, VS Code, and other MCP clients, see the [MCP Server Documentation](./docs/mcp.md).**
 
 ## k8s-bench
 
