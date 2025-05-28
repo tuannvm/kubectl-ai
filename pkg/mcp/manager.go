@@ -18,11 +18,39 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"k8s.io/klog/v2"
 )
 
-// Manager manages multiple MCP client connections
+// =============================================================================
+// Status Types
+// =============================================================================
+
+// ServerConnectionInfo holds connection status for a single MCP server
+type ServerConnectionInfo struct {
+	Name           string
+	Command        string
+	IsLegacy       bool
+	IsConnected    bool
+	AvailableTools []Tool
+}
+
+// MCPStatus represents the overall status of MCP servers and tools
+type MCPStatus struct {
+	ServerInfoList []ServerConnectionInfo
+	TotalServers   int
+	ConnectedCount int
+	FailedCount    int
+	TotalTools     int
+	ClientEnabled  bool
+}
+
+// =============================================================================
+// Manager Core
+// =============================================================================
+
+// Manager handles MCP client connections and tool discovery
 type Manager struct {
 	config  *Config
 	clients map[string]*Client
@@ -37,6 +65,24 @@ func NewManager(config *Config) *Manager {
 	}
 }
 
+// InitializeManager creates and initializes the MCP manager
+// with configuration loaded from default paths
+func InitializeManager() (*Manager, error) {
+	klog.V(1).Info("Initializing MCP client functionality")
+
+	config, err := LoadConfig("")
+	if err != nil {
+		klog.V(2).Info("Failed to load MCP config", "error", err)
+		return nil, err
+	}
+
+	return NewManager(config), nil
+}
+
+// =============================================================================
+// Connection Management
+// =============================================================================
+
 // ConnectAll connects to all configured MCP servers
 func (m *Manager) ConnectAll(ctx context.Context) error {
 	m.mu.Lock()
@@ -46,11 +92,10 @@ func (m *Manager) ConnectAll(ctx context.Context) error {
 
 	for _, serverCfg := range m.config.Servers {
 		if _, exists := m.clients[serverCfg.Name]; exists {
-			klog.V(LogLevelInfo).Info("MCP client already connected", "name", serverCfg.Name)
+			klog.V(2).Info("MCP client already connected", "name", serverCfg.Name)
 			continue
 		}
 
-		// Create client with environment variables
 		client := NewClient(serverCfg.Name, serverCfg.Command, serverCfg.Args, serverCfg.Env)
 		if err := client.Connect(ctx); err != nil {
 			err := fmt.Errorf(ErrServerConnectionFmt, serverCfg.Name, err)
@@ -60,7 +105,7 @@ func (m *Manager) ConnectAll(ctx context.Context) error {
 		}
 
 		m.clients[serverCfg.Name] = client
-		klog.V(LogLevelInfo).Info("Connected to MCP server", "name", serverCfg.Name)
+		klog.V(2).Info("Connected to MCP server", "name", serverCfg.Name)
 	}
 
 	if len(errs) > 0 {
@@ -113,7 +158,32 @@ func (m *Manager) ListClients() []*Client {
 	return clients
 }
 
-// ListAvailableTools returns a map of all available tools from all connected MCP servers
+// =============================================================================
+// Server and Tool Discovery
+// =============================================================================
+
+// DiscoverAndConnectServers connects to all configured servers
+// with a timeout and stabilization delay
+func (m *Manager) DiscoverAndConnectServers(ctx context.Context) error {
+	klog.V(1).Info("Connecting to MCP servers")
+
+	connectCtx, connectCancel := context.WithTimeout(ctx, DefaultConnectionTimeout)
+	defer connectCancel()
+
+	if err := m.ConnectAll(connectCtx); err != nil {
+		klog.V(2).Info("Failed to connect to some MCP servers during auto-discovery", "error", err)
+		// Continue with partial connections
+	}
+
+	// Allow connections to stabilize before tool discovery
+	klog.V(3).Info("Waiting for server connections to stabilize", "delay", DefaultStabilizationDelay)
+	time.Sleep(DefaultStabilizationDelay)
+
+	return nil
+}
+
+// ListAvailableTools returns tools from all connected servers
+// For retries and more robust handling, use RefreshToolDiscovery
 func (m *Manager) ListAvailableTools(ctx context.Context) (map[string][]Tool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -136,6 +206,185 @@ func (m *Manager) ListAvailableTools(ctx context.Context) (map[string][]Tool, er
 	}
 
 	return tools, nil
+}
+
+// RefreshToolDiscovery discovers tools from all servers with retries
+func (m *Manager) RefreshToolDiscovery(ctx context.Context) (map[string][]Tool, error) {
+	klog.V(1).Info("Starting tool discovery from MCP servers with retries")
+
+	var serverTools map[string][]Tool
+
+	retryConfig := DefaultRetryConfig("tool discovery from MCP servers")
+	err := RetryOperation(ctx, retryConfig, func() error {
+		var err error
+		serverTools, err = m.ListAvailableTools(ctx)
+		return err
+	})
+
+	if err != nil {
+		klog.Warningf("Failed to discover tools after retries: %v", err)
+		return nil, err
+	}
+
+	// Log discovery results
+	toolCount := 0
+	for serverName, tools := range serverTools {
+		klog.V(1).Info("Discovered tools from MCP server", "server", serverName, "toolCount", len(tools))
+		toolCount += len(tools)
+	}
+
+	if toolCount > 0 {
+		klog.InfoS("Successfully discovered MCP tools", "totalTools", toolCount)
+	} else {
+		klog.V(1).Info("No MCP tools were discovered from connected servers")
+	}
+
+	return serverTools, nil
+}
+
+// =============================================================================
+// Status Reporting
+// =============================================================================
+
+// GetStatus returns status of all MCP servers and their tools
+func (m *Manager) GetStatus(ctx context.Context, mcpClientEnabled bool) (*MCPStatus, error) {
+	status := &MCPStatus{
+		ClientEnabled: mcpClientEnabled,
+	}
+
+	mcpConfigPath, err := DefaultConfigPath()
+	if err != nil {
+		klog.V(2).Infof("Failed to get MCP config path: %v", err)
+		return status, nil // Return empty status
+	}
+
+	mcpConfig, err := LoadConfig(mcpConfigPath)
+	if err != nil {
+		return status, nil // Return empty status
+	}
+
+	status.TotalServers = len(mcpConfig.Servers) + len(mcpConfig.MCPServers)
+
+	if status.TotalServers == 0 {
+		return status, nil
+	}
+
+	var serverTools map[string][]Tool
+	var connectedClients []*Client
+
+	if mcpClientEnabled && m != nil {
+		connectedClients = m.ListClients()
+		status.ConnectedCount = len(connectedClients)
+		status.FailedCount = status.TotalServers - status.ConnectedCount
+
+		toolsCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		serverTools, err = m.ListAvailableTools(toolsCtx)
+		if err != nil {
+			klog.V(2).InfoS("Failed to get tools from MCP manager", "error", err)
+			serverTools = make(map[string][]Tool)
+		}
+
+		for _, toolList := range serverTools {
+			status.TotalTools += len(toolList)
+		}
+	} else {
+		serverTools = make(map[string][]Tool)
+	}
+
+	connectedServerNames := make(map[string]bool)
+	if mcpClientEnabled {
+		for _, client := range connectedClients {
+			connectedServerNames[client.Name] = true
+		}
+	}
+
+	// Process standard servers
+	for _, server := range mcpConfig.Servers {
+		serverInfo := ServerConnectionInfo{
+			Name:        server.Name,
+			Command:     server.Command,
+			IsLegacy:    false,
+			IsConnected: connectedServerNames[server.Name],
+		}
+
+		if tools, exists := serverTools[server.Name]; exists {
+			serverInfo.AvailableTools = tools
+		}
+
+		status.ServerInfoList = append(status.ServerInfoList, serverInfo)
+	}
+
+	// Process legacy servers
+	for name, server := range mcpConfig.MCPServers {
+		serverName := name
+		if server.Name != "" {
+			serverName = server.Name
+		}
+
+		serverInfo := ServerConnectionInfo{
+			Name:        serverName,
+			Command:     server.Command,
+			IsLegacy:    true,
+			IsConnected: connectedServerNames[serverName],
+		}
+
+		if tools, exists := serverTools[serverName]; exists {
+			serverInfo.AvailableTools = tools
+		}
+
+		status.ServerInfoList = append(status.ServerInfoList, serverInfo)
+	}
+
+	return status, nil
+}
+
+// LogConfig logs the MCP configuration summary
+// If mcpConfigPath is empty, uses the Manager's existing config
+func (m *Manager) LogConfig(mcpConfigPath string) error {
+	var mcpConfig *Config
+	var err error
+
+	if mcpConfigPath == "" && m.config != nil {
+		mcpConfig = m.config
+	} else {
+		mcpConfig, err = LoadConfig(mcpConfigPath)
+		if err != nil {
+			return fmt.Errorf("failed to load MCP config from %s: %w", mcpConfigPath, err)
+		}
+	}
+
+	serverCount := len(mcpConfig.Servers)
+	legacyServerCount := len(mcpConfig.MCPServers)
+	totalServers := serverCount + legacyServerCount
+
+	if totalServers > 0 {
+		serverWord := "server"
+		if totalServers > 1 {
+			serverWord = "servers"
+		}
+
+		if mcpConfigPath != "" {
+			klog.V(2).Infof("Loaded %d MCP %s from %s", totalServers, serverWord, mcpConfigPath)
+		} else {
+			klog.V(2).Infof("Found %d MCP %s in configuration", totalServers, serverWord)
+		}
+
+		for _, server := range mcpConfig.Servers {
+			klog.V(2).Infof("  - %s: %s", server.Name, server.Command)
+		}
+
+		for name, server := range mcpConfig.MCPServers {
+			serverName := name
+			if server.Name != "" {
+				serverName = server.Name
+			}
+			klog.V(2).Infof("  - %s: %s (legacy)", serverName, server.Command)
+		}
+	}
+
+	return nil
 }
 
 // ToolInfo is an alias for Tool to maintain backward compatibility

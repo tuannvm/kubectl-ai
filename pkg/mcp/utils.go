@@ -24,7 +24,6 @@ import (
 	"strings"
 	"time"
 
-	mcp "github.com/mark3labs/mcp-go/mcp"
 	"k8s.io/klog/v2"
 )
 
@@ -53,14 +52,14 @@ func RetryOperation(ctx context.Context, config RetryConfig, operation func() er
 	var lastErr error
 
 	for attempt := 1; attempt <= config.MaxRetries; attempt++ {
-		klog.V(LogLevelDebug).InfoS("Attempting operation",
+		klog.V(3).InfoS("Attempting operation",
 			"operation", config.Description,
 			"attempt", attempt,
 			"maxRetries", config.MaxRetries)
 
 		if err := operation(); err == nil {
 			if attempt > 1 {
-				klog.V(LogLevelInfo).InfoS("Operation succeeded after retry",
+				klog.V(2).InfoS("Operation succeeded after retry",
 					"operation", config.Description,
 					"attempt", attempt)
 			}
@@ -70,7 +69,7 @@ func RetryOperation(ctx context.Context, config RetryConfig, operation func() er
 
 			if attempt < config.MaxRetries {
 				delay := calculateBackoffDelay(attempt, config)
-				klog.V(LogLevelDebug).InfoS("Operation failed, retrying",
+				klog.V(3).InfoS("Operation failed, retrying",
 					"operation", config.Description,
 					"attempt", attempt,
 					"error", err,
@@ -172,18 +171,18 @@ func expandPath(path string) (string, error) {
 
 	// If the command contains no path separators, look it up in $PATH first
 	if !strings.Contains(expanded, string(filepath.Separator)) && !strings.HasPrefix(expanded, "~") {
-		klog.V(LogLevelInfo).InfoS("Attempting PATH lookup for command", "command", expanded)
+		klog.V(2).InfoS("Attempting PATH lookup for command", "command", expanded)
 		// Try to find the command in $PATH
 		if pathResolved, err := exec.LookPath(expanded); err == nil {
-			klog.V(LogLevelInfo).InfoS("Found command in PATH", "command", expanded, "resolved", pathResolved)
+			klog.V(2).InfoS("Found command in PATH", "command", expanded, "resolved", pathResolved)
 			return pathResolved, nil
 		} else {
-			klog.V(LogLevelInfo).InfoS("Command not found in PATH", "command", expanded, "error", err)
+			klog.V(2).InfoS("Command not found in PATH", "command", expanded, "error", err)
 		}
 		// If not found in PATH, continue with the original logic below
-		klog.V(LogLevelInfo).InfoS("Command not found in PATH, trying relative to current directory", "command", expanded)
+		klog.V(2).InfoS("Command not found in PATH, trying relative to current directory", "command", expanded)
 	} else {
-		klog.V(LogLevelInfo).InfoS("Skipping PATH lookup", "command", expanded, "hasPathSeparator", strings.Contains(expanded, string(filepath.Separator)), "hasTilde", strings.HasPrefix(expanded, "~"))
+		klog.V(2).InfoS("Skipping PATH lookup", "command", expanded, "hasPathSeparator", strings.Contains(expanded, string(filepath.Separator)), "hasTilde", strings.HasPrefix(expanded, "~"))
 	}
 
 	// Handle ~ for home directory
@@ -241,16 +240,4 @@ func (c *Client) ensureConnected() error {
 		return fmt.Errorf("not connected to MCP server")
 	}
 	return nil
-}
-
-// convertMCPToolsToTools converts MCP library tools to our Tool type
-func convertMCPToolsToTools(mcpTools []mcp.Tool) []Tool {
-	tools := make([]Tool, 0, len(mcpTools))
-	for _, tool := range mcpTools {
-		tools = append(tools, Tool{
-			Name:        tool.Name,
-			Description: tool.Description,
-		})
-	}
-	return tools
 }

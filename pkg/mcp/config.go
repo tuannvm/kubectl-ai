@@ -99,7 +99,7 @@ func DefaultConfigPath() (string, error) {
 		// If the old config exists, move it to the new location
 		if err := os.MkdirAll(filepath.Dir(configPath), ConfigDirPermissions); err == nil {
 			if err := os.Rename(oldConfigPath, configPath); err == nil {
-				klog.V(LogLevelInfo).Info("Migrated MCP config to new location", "oldPath", oldConfigPath, "newPath", configPath)
+				klog.V(2).Info("Migrated MCP config to new location", "oldPath", oldConfigPath, "newPath", configPath)
 			}
 		}
 	}
@@ -136,7 +136,7 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("saving default config: %w", err)
 		}
 
-		klog.V(LogLevelInfo).Info("Created default MCP configuration", "path", path)
+		klog.V(2).Info("Created default MCP configuration", "path", path)
 		return defaultConfig, nil
 	}
 
@@ -153,14 +153,14 @@ func LoadConfig(path string) (*Config, error) {
 
 	// Handle legacy migration if needed
 	if config.NeedsLegacyMigration() {
-		klog.V(LogLevelInfo).Info("Migrating MCP config from legacy format", "path", path)
+		klog.V(2).Info("Migrating MCP config from legacy format", "path", path)
 		config.MigrateFromLegacy()
 
 		// Save the migrated configuration
 		if err := config.Save(path); err != nil {
 			klog.Warningf("Failed to save migrated MCP config: %v", err)
 		} else {
-			klog.V(LogLevelInfo).Info("Successfully migrated and saved MCP config")
+			klog.V(2).Info("Successfully migrated and saved MCP config")
 		}
 	}
 
@@ -198,7 +198,7 @@ func (c *Config) Save(path string) error {
 		return fmt.Errorf("writing config file: %w", err)
 	}
 
-	klog.V(LogLevelInfo).Info("Saved MCP configuration", "path", path)
+	klog.V(2).Info("Saved MCP configuration", "path", path)
 	return nil
 }
 

@@ -135,7 +135,7 @@ func (c *Client) verifyConnection(ctx context.Context) error {
 
 	_, err := c.ListTools(verifyCtx)
 	if err != nil {
-		klog.V(LogLevelInfo).InfoS("First ListTools attempt failed, trying ping and retry", "server", c.Name, "error", err)
+		klog.V(2).InfoS("First ListTools attempt failed, trying ping and retry", "server", c.Name, "error", err)
 		return c.retryConnectionWithPing(ctx)
 	}
 
@@ -149,11 +149,11 @@ func (c *Client) retryConnectionWithPing(ctx context.Context) error {
 	defer pingCancel()
 
 	if err := c.client.Ping(pingCtx); err != nil {
-		klog.V(LogLevelInfo).InfoS("Ping also failed", "server", c.Name, "error", err)
+		klog.V(2).InfoS("Ping also failed", "server", c.Name, "error", err)
 		return fmt.Errorf("server ping failed: %w", err)
 	}
 
-	klog.V(LogLevelInfo).InfoS("Ping succeeded, retrying ListTools", "server", c.Name)
+	klog.V(2).InfoS("Ping succeeded, retrying ListTools", "server", c.Name)
 
 	// Retry ListTools after successful ping
 	retryCtx, retryCancel := withTimeout(ctx, DefaultVerificationTimeout)
@@ -234,7 +234,7 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 // CallTool calls a tool on the MCP server and returns the result as a string
 // The arguments should be a map of parameter names to values that will be passed to the tool
 func (c *Client) CallTool(ctx context.Context, toolName string, arguments map[string]interface{}) (string, error) {
-	klog.V(LogLevelInfo).InfoS("Calling MCP tool", "server", c.Name, "tool", toolName, "args", arguments)
+	klog.V(2).InfoS("Calling MCP tool", "server", c.Name, "tool", toolName, "args", arguments)
 
 	if err := c.ensureConnected(); err != nil {
 		return "", err
@@ -350,4 +350,16 @@ func (t Tool) AsBasicTool() Tool {
 // IsFromServer checks if the tool belongs to a specific server
 func (t Tool) IsFromServer(server string) bool {
 	return t.Server == server
+}
+
+// convertMCPToolsToTools converts MCP library tools to our Tool type
+func convertMCPToolsToTools(mcpTools []mcp.Tool) []Tool {
+	tools := make([]Tool, 0, len(mcpTools))
+	for _, tool := range mcpTools {
+		tools = append(tools, Tool{
+			Name:        tool.Name,
+			Description: tool.Description,
+		})
+	}
+	return tools
 }

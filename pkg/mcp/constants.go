@@ -31,18 +31,6 @@ const (
 	DefaultStabilizationDelay = 2 * time.Second
 )
 
-// Log level constants for consistent logging
-const (
-	// LogLevelDebug for detailed debugging information
-	LogLevelDebug = 3
-
-	// LogLevelInfo for general information
-	LogLevelInfo = 2
-
-	// LogLevelBasic for basic operational information
-	LogLevelBasic = 1
-)
-
 // Error message templates
 const (
 	ErrServerConnectionFmt = "connecting to MCP server %q: %w"
