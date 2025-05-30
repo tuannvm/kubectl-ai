@@ -90,6 +90,12 @@ func (t *MCPTool) FunctionDefinition() *gollm.FunctionDefinition {
 	return t.schema
 }
 
+// TODO(tuannvm): This is a placeholder implementation. Need to implement detection of interactive MCP tools.
+// IsInteractive checks if the tool requires interactive input.
+func (t *MCPTool) IsInteractive(args map[string]any) (bool, error) {
+	return false, nil
+}
+
 // Run executes the MCP tool by calling the appropriate MCP server.
 func (t *MCPTool) Run(ctx context.Context, args map[string]any) (any, error) {
 	// Get MCP client for the server
