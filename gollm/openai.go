@@ -243,6 +243,8 @@ func (cs *openAIChatSession) SetFunctionDefinitions(defs []*FunctionDefinition) 
 	if len(defs) > 0 {
 		cs.tools = make([]openai.ChatCompletionToolParam, len(defs))
 		for i, gollmDef := range defs {
+			klog.Infof("Processing function definition: %s", gollmDef.Name)
+
 			// Basic conversion, assuming schema is compatible or nil
 			var params openai.FunctionParameters
 			if gollmDef.Parameters != nil {
@@ -252,6 +254,26 @@ func (cs *openAIChatSession) SetFunctionDefinitions(defs []*FunctionDefinition) 
 				if err != nil {
 					return fmt.Errorf("failed to convert schema for function %s: %w", gollmDef.Name, err)
 				}
+				// Debug log the schema being sent to OpenAI
+				klog.Infof("OpenAI schema for function %s: %s", gollmDef.Name, string(bytes))
+
+				// Final validation: Parse the JSON and ensure it meets OpenAI requirements
+				var schemaValidation map[string]interface{}
+				if err := json.Unmarshal(bytes, &schemaValidation); err == nil {
+					// Check if it's an object type without properties
+					if schemaType, ok := schemaValidation["type"].(string); ok && schemaType == "object" {
+						if _, hasProps := schemaValidation["properties"]; !hasProps {
+							klog.Warningf("Function %s: Fixing object schema without properties", gollmDef.Name)
+							// Force add empty properties
+							schemaValidation["properties"] = map[string]interface{}{}
+							// Re-marshal the fixed schema
+							fixedBytes, _ := json.Marshal(schemaValidation)
+							klog.Infof("Fixed schema for %s: %s", gollmDef.Name, string(fixedBytes))
+							bytes = fixedBytes
+						}
+					}
+				}
+
 				if err := json.Unmarshal(bytes, &params); err != nil {
 					return fmt.Errorf("failed to unmarshal schema for function %s: %w", gollmDef.Name, err)
 				}
