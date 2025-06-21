@@ -248,12 +248,18 @@ func (cs *openAIChatSession) SetFunctionDefinitions(defs []*FunctionDefinition) 
 			// Basic conversion, assuming schema is compatible or nil
 			var params openai.FunctionParameters
 			if gollmDef.Parameters != nil {
-				// NOTE: This assumes gollmDef.Parameters is directly marshalable to JSON
-				// that fits openai.FunctionParameters. May need refinement.
-				bytes, err := gollmDef.Parameters.ToRawSchema()
+				// Validate and convert the schema for OpenAI compatibility
+				validatedSchema, err := validateSchemaForOpenAI(gollmDef.Parameters)
+				if err != nil {
+					return fmt.Errorf("failed to validate schema for function %s: %w", gollmDef.Name, err)
+				}
+
+				// Convert to raw schema
+				bytes, err := validatedSchema.ToRawSchema()
 				if err != nil {
 					return fmt.Errorf("failed to convert schema for function %s: %w", gollmDef.Name, err)
 				}
+
 				// Debug log the schema being sent to OpenAI
 				klog.Infof("OpenAI schema for function %s: %s", gollmDef.Name, string(bytes))
 
@@ -708,4 +714,85 @@ func (p *openAIStreamPart) AsFunctionCalls() ([]FunctionCall, bool) {
 		})
 	}
 	return calls, true
+}
+
+// validateSchemaForOpenAI validates and normalizes a schema for OpenAI compatibility
+func validateSchemaForOpenAI(schema *Schema) (*Schema, error) {
+	if schema == nil {
+		// Return a minimal valid object schema for OpenAI
+		return &Schema{
+			Type:       TypeObject,
+			Properties: make(map[string]*Schema),
+		}, nil
+	}
+
+	// Create a deep copy to avoid modifying the original
+	validated := &Schema{
+		Description: schema.Description,
+		Required:    make([]string, len(schema.Required)),
+	}
+	copy(validated.Required, schema.Required)
+
+	// Handle type validation and normalization based on OpenAI requirements
+	switch schema.Type {
+	case TypeObject:
+		validated.Type = TypeObject
+		// Objects MUST have properties for OpenAI (even if empty)
+		validated.Properties = make(map[string]*Schema)
+		if schema.Properties != nil {
+			for key, prop := range schema.Properties {
+				validatedProp, err := validateSchemaForOpenAI(prop)
+				if err != nil {
+					return nil, fmt.Errorf("validating property %q: %w", key, err)
+				}
+				validated.Properties[key] = validatedProp
+			}
+		}
+
+	case TypeArray:
+		validated.Type = TypeArray
+		// Arrays MUST have items schema for OpenAI
+		if schema.Items != nil {
+			validatedItems, err := validateSchemaForOpenAI(schema.Items)
+			if err != nil {
+				return nil, fmt.Errorf("validating array items: %w", err)
+			}
+			validated.Items = validatedItems
+		} else {
+			// Default to string items if not specified
+			validated.Items = &Schema{Type: TypeString}
+		}
+
+	case TypeString:
+		validated.Type = TypeString
+
+	case TypeNumber:
+		validated.Type = TypeNumber
+
+	case TypeInteger:
+		// OpenAI prefers "number" for integers
+		validated.Type = TypeNumber
+
+	case TypeBoolean:
+		validated.Type = TypeBoolean
+
+	case "":
+		// If no type specified, default to object with empty properties
+		klog.Warningf("Schema has no type, defaulting to object")
+		validated.Type = TypeObject
+		validated.Properties = make(map[string]*Schema)
+
+	default:
+		// For unknown types, log a warning and default to object
+		klog.Warningf("Unknown schema type '%s', defaulting to object", schema.Type)
+		validated.Type = TypeObject
+		validated.Properties = make(map[string]*Schema)
+	}
+
+	// Final validation: Ensure object types always have properties
+	if validated.Type == TypeObject && validated.Properties == nil {
+		validated.Properties = make(map[string]*Schema)
+	}
+
+	return validated, nil
 }
