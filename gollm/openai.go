@@ -61,11 +61,6 @@ func init() {
 	}
 }
 
-// newOpenAIClientFactory is the factory function for creating OpenAI clients.
-func newOpenAIClientFactory(ctx context.Context, opts ClientOptions) (Client, error) {
-	return NewOpenAIClient(ctx, opts)
-}
-
 // OpenAIClient implements the gollm.Client interface for OpenAI models.
 type OpenAIClient struct {
 	client openai.Client
@@ -74,30 +69,8 @@ type OpenAIClient struct {
 // Ensure OpenAIClient implements the Client interface.
 var _ Client = &OpenAIClient{}
 
-// getOpenAIModel returns the appropriate model based on configuration and explicitly provided model name
-func getOpenAIModel(model string) string {
-	// If explicit model is provided, use it
-	if model != "" {
-		klog.V(2).Infof("Using explicitly provided model: %s", model)
-		return model
-	}
-
-	// Check configuration
-	configModel := openAIModel
-	if configModel != "" {
-		klog.V(1).Infof("Using model from config: %s", configModel)
-		return configModel
-	}
-
-	// Default model as fallback
-	klog.V(2).Info("No model specified, defaulting to gpt-4.1")
-	return "gpt-4.1"
-}
-
-/*
-NewOpenAIClient creates a new client for interacting with OpenAI.
-Supports custom HTTP client (e.g., for skipping SSL verification).
-*/
+// NewOpenAIClient creates a new client for interacting with OpenAI.
+// Supports custom HTTP client (e.g., for skipping SSL verification).
 func NewOpenAIClient(ctx context.Context, opts ClientOptions) (*OpenAIClient, error) {
 	// Get API key from loaded env var
 	apiKey := openAIAPIKey
@@ -215,15 +188,15 @@ func (c *OpenAIClient) ListModels(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("error listing models from OpenAI: %w", err)
 	}
 
-	modelsIDs := make([]string, 0, len(res.Data))
+	modelIDs := make([]string, 0, len(res.Data))
 	for _, model := range res.Data {
-		modelsIDs = append(modelsIDs, model.ID)
+		modelIDs = append(modelIDs, model.ID)
 	}
 
-	return modelsIDs, nil
+	return modelIDs, nil
 }
 
-// --- Chat Session Implementation ---
+// Chat Session Implementation
 
 type openAIChatSession struct {
 	client              openai.Client
@@ -245,45 +218,12 @@ func (cs *openAIChatSession) SetFunctionDefinitions(defs []*FunctionDefinition) 
 		for i, gollmDef := range defs {
 			klog.Infof("Processing function definition: %s", gollmDef.Name)
 
-			// Basic conversion, assuming schema is compatible or nil
-			var params openai.FunctionParameters
-			if gollmDef.Parameters != nil {
-				// Validate and convert the schema for OpenAI compatibility
-				validatedSchema, err := validateSchemaForOpenAI(gollmDef.Parameters)
-				if err != nil {
-					return fmt.Errorf("failed to validate schema for function %s: %w", gollmDef.Name, err)
-				}
-
-				// Convert to raw schema
-				bytes, err := validatedSchema.ToRawSchema()
-				if err != nil {
-					return fmt.Errorf("failed to convert schema for function %s: %w", gollmDef.Name, err)
-				}
-
-				// Debug log the schema being sent to OpenAI
-				klog.Infof("OpenAI schema for function %s: %s", gollmDef.Name, string(bytes))
-
-				// Final validation: Parse the JSON and ensure it meets OpenAI requirements
-				var schemaValidation map[string]interface{}
-				if err := json.Unmarshal(bytes, &schemaValidation); err == nil {
-					// Check if it's an object type without properties
-					if schemaType, ok := schemaValidation["type"].(string); ok && schemaType == "object" {
-						if _, hasProps := schemaValidation["properties"]; !hasProps {
-							klog.Warningf("Function %s: Fixing object schema without properties", gollmDef.Name)
-							// Force add empty properties
-							schemaValidation["properties"] = map[string]interface{}{}
-							// Re-marshal the fixed schema
-							fixedBytes, _ := json.Marshal(schemaValidation)
-							klog.Infof("Fixed schema for %s: %s", gollmDef.Name, string(fixedBytes))
-							bytes = fixedBytes
-						}
-					}
-				}
-
-				if err := json.Unmarshal(bytes, &params); err != nil {
-					return fmt.Errorf("failed to unmarshal schema for function %s: %w", gollmDef.Name, err)
-				}
+			// Process function parameters
+			params, err := cs.processFunctionParameters(gollmDef)
+			if err != nil {
+				return fmt.Errorf("failed to process parameters for function %s: %w", gollmDef.Name, err)
 			}
+
 			cs.tools[i] = openai.ChatCompletionToolParam{
 				Function: openai.FunctionDefinitionParam{
 					Name:        gollmDef.Name,
@@ -301,37 +241,13 @@ func (cs *openAIChatSession) SetFunctionDefinitions(defs []*FunctionDefinition) 
 func (cs *openAIChatSession) Send(ctx context.Context, contents ...any) (ChatResponse, error) {
 	klog.V(1).InfoS("openAIChatSession.Send called", "model", cs.model, "history_len", len(cs.history))
 
-	// Append user message(s) to history
-	for _, content := range contents {
-		switch c := content.(type) {
-		case string:
-			klog.V(2).Infof("Adding user message to history: %s", c)
-			cs.history = append(cs.history, openai.UserMessage(c))
-		case FunctionCallResult:
-			klog.V(2).Infof("Adding tool call result to history: Name=%s, ID=%s", c.Name, c.ID)
-			// Marshal the result map into a JSON string for the message content
-			resultJSON, err := json.Marshal(c.Result)
-			if err != nil {
-				klog.Errorf("Failed to marshal function call result: %v", err)
-				return nil, fmt.Errorf("failed to marshal function call result %q: %w", c.Name, err)
-			}
-			cs.history = append(cs.history, openai.ToolMessage(string(resultJSON), c.ID))
-		default:
-			// TODO: Handle other content types if necessary?
-			klog.Warningf("Unhandled content type in Send: %T", content)
-			return nil, fmt.Errorf("unhandled content type: %T", content)
-		}
+	// Process and append messages to history
+	if err := cs.processContentsToHistory(contents); err != nil {
+		return nil, err
 	}
 
-	// Prepare the API request
-	chatReq := openai.ChatCompletionNewParams{
-		Model:    openai.ChatModel(cs.model),
-		Messages: cs.history,
-	}
-	if len(cs.tools) > 0 {
-		chatReq.Tools = cs.tools
-		// chatReq.ToolChoice = openai.ToolChoiceAuto // Or specify if needed
-	}
+	// Prepare and send API request
+	chatReq := cs.prepareChatRequest()
 
 	// Call the OpenAI API
 	klog.V(1).InfoS("Sending request to OpenAI Chat API", "model", cs.model, "messages", len(chatReq.Messages), "tools", len(chatReq.Tools))
@@ -367,32 +283,13 @@ func (cs *openAIChatSession) Send(ctx context.Context, contents ...any) (ChatRes
 func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any) (ChatResponseIterator, error) {
 	klog.V(1).InfoS("Starting OpenAI streaming request", "model", cs.model)
 
-	// Append user message(s) to history
-	for _, content := range contents {
-		switch c := content.(type) {
-		case string:
-			klog.V(2).Infof("Adding user message to history: %s", c)
-			cs.history = append(cs.history, openai.UserMessage(c))
-		case FunctionCallResult:
-			klog.V(2).Infof("Adding tool call result to history: Name=%s, ID=%s", c.Name, c.ID)
-			resultJSON, err := json.Marshal(c.Result)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal function call result %q: %w", c.Name, err)
-			}
-			cs.history = append(cs.history, openai.ToolMessage(string(resultJSON), c.ID))
-		default:
-			return nil, fmt.Errorf("unhandled content type: %T", content)
-		}
+	// Process and append messages to history
+	if err := cs.processContentsToHistory(contents); err != nil {
+		return nil, err
 	}
 
-	// Prepare the API request
-	chatReq := openai.ChatCompletionNewParams{
-		Model:    openai.ChatModel(cs.model),
-		Messages: cs.history,
-	}
-	if len(cs.tools) > 0 {
-		chatReq.Tools = cs.tools
-	}
+	// Prepare and send API request
+	chatReq := cs.prepareChatRequest()
 
 	// Start the OpenAI streaming request
 	klog.V(1).InfoS("Sending streaming request to OpenAI API",
@@ -509,7 +406,7 @@ func (cs *openAIChatSession) IsRetryableError(err error) bool {
 	return DefaultIsRetryableError(err)
 }
 
-// --- Helper structs for ChatResponse interface ---
+// Helper structs for ChatResponse interface
 
 type openAIChatResponse struct {
 	openaiCompletion *openai.ChatCompletion
@@ -585,29 +482,7 @@ func (p *openAIPart) AsText() (string, bool) {
 }
 
 func (p *openAIPart) AsFunctionCalls() ([]FunctionCall, bool) {
-	if len(p.toolCalls) == 0 {
-		return nil, false
-	}
-
-	// Convert only complete function calls
-	var completeCalls []FunctionCall
-	for _, tc := range p.toolCalls {
-		// Check if it's a function call by seeing if Function Name is populated
-		if tc.Function.Name == "" { // Adjusted check for function calls
-			klog.V(2).Infof("Skipping non-function tool call ID: %s", tc.ID)
-			continue
-		}
-		var args map[string]any
-		// Attempt to unmarshal arguments, ignore error for now if it fails
-		_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-
-		completeCalls = append(completeCalls, FunctionCall{
-			ID:        tc.ID, // Pass the Tool Call ID
-			Name:      tc.Function.Name,
-			Arguments: args,
-		})
-	}
-	return completeCalls, true
+	return convertToolCallsToFunctionCalls(p.toolCalls)
 }
 
 // Update openAIChatStreamResponse to include accumulated content
@@ -691,29 +566,7 @@ func (p *openAIStreamPart) AsText() (string, bool) {
 }
 
 func (p *openAIStreamPart) AsFunctionCalls() ([]FunctionCall, bool) {
-	if len(p.toolCalls) == 0 {
-		return nil, false
-	}
-
-	calls := make([]FunctionCall, 0, len(p.toolCalls))
-	for _, tc := range p.toolCalls {
-		var args map[string]any
-		if tc.Function.Arguments != "" {
-			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				klog.V(2).Infof("Error unmarshalling function arguments: %v", err)
-				args = make(map[string]any)
-			}
-		} else {
-			args = make(map[string]any)
-		}
-
-		calls = append(calls, FunctionCall{
-			ID:        tc.ID,
-			Name:      tc.Function.Name,
-			Arguments: args,
-		})
-	}
-	return calls, true
+	return convertToolCallsToFunctionCalls(p.toolCalls)
 }
 
 // validateSchemaForOpenAI validates and normalizes a schema for OpenAI compatibility
@@ -795,4 +648,178 @@ func validateSchemaForOpenAI(schema *Schema) (*Schema, error) {
 	}
 
 	return validated, nil
+}
+
+// processFunctionParameters handles the conversion of gollm parameters to OpenAI format
+func (cs *openAIChatSession) processFunctionParameters(gollmDef *FunctionDefinition) (openai.FunctionParameters, error) {
+	var params openai.FunctionParameters
+
+	if gollmDef.Parameters == nil {
+		return params, nil
+	}
+
+	// Validate and convert the schema for OpenAI compatibility
+	validatedSchema, err := validateSchemaForOpenAI(gollmDef.Parameters)
+	if err != nil {
+		return params, fmt.Errorf("schema validation failed: %w", err)
+	}
+
+	// Convert to raw schema bytes
+	schemaBytes, err := cs.convertSchemaToBytes(validatedSchema, gollmDef.Name)
+	if err != nil {
+		return params, err
+	}
+
+	// Unmarshal into OpenAI parameters format
+	if err := json.Unmarshal(schemaBytes, &params); err != nil {
+		return params, fmt.Errorf("failed to unmarshal schema: %w", err)
+	}
+
+	return params, nil
+}
+
+// convertSchemaToBytes converts a validated schema to JSON bytes with OpenAI-specific fixes
+func (cs *openAIChatSession) convertSchemaToBytes(schema *Schema, functionName string) ([]byte, error) {
+	// Convert to raw schema
+	bytes, err := schema.ToRawSchema()
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert schema: %w", err)
+	}
+
+	klog.Infof("OpenAI schema for function %s: %s", functionName, string(bytes))
+
+	// Apply OpenAI-specific fixes
+	fixedBytes, err := cs.fixOpenAISchemaIssues(bytes, functionName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fix schema issues: %w", err)
+	}
+
+	return fixedBytes, nil
+}
+
+// fixOpenAISchemaIssues handles OpenAI-specific schema requirements
+func (cs *openAIChatSession) fixOpenAISchemaIssues(schemaBytes []byte, functionName string) ([]byte, error) {
+	var schemaMap map[string]interface{}
+	if err := json.Unmarshal(schemaBytes, &schemaMap); err != nil {
+		return schemaBytes, nil // Return original if parsing fails
+	}
+
+	// Fix object schemas without properties (OpenAI requirement)
+	if cs.isObjectSchemaWithoutProperties(schemaMap) {
+		klog.Warningf("Function %s: Fixing object schema without properties", functionName)
+		schemaMap["properties"] = map[string]interface{}{}
+
+		fixedBytes, err := json.Marshal(schemaMap)
+		if err != nil {
+			return schemaBytes, nil // Return original if marshaling fails
+		}
+
+		klog.Infof("Fixed schema for %s: %s", functionName, string(fixedBytes))
+		return fixedBytes, nil
+	}
+
+	return schemaBytes, nil
+}
+
+// isObjectSchemaWithoutProperties checks if schema is an object type missing properties
+func (cs *openAIChatSession) isObjectSchemaWithoutProperties(schema map[string]interface{}) bool {
+	schemaType, hasType := schema["type"].(string)
+	_, hasProperties := schema["properties"]
+
+	return hasType && schemaType == "object" && !hasProperties
+}
+
+// newOpenAIClientFactory is the factory function for creating OpenAI clients.
+func newOpenAIClientFactory(ctx context.Context, opts ClientOptions) (Client, error) {
+	return NewOpenAIClient(ctx, opts)
+}
+
+// processContentsToHistory processes and appends user messages to chat history
+func (cs *openAIChatSession) processContentsToHistory(contents []any) error {
+	for _, content := range contents {
+		switch c := content.(type) {
+		case string:
+			klog.V(2).Infof("Adding user message to history: %s", c)
+			cs.history = append(cs.history, openai.UserMessage(c))
+		case FunctionCallResult:
+			klog.V(2).Infof("Adding tool call result to history: Name=%s, ID=%s", c.Name, c.ID)
+			// Marshal the result map into a JSON string for the message content
+			resultJSON, err := json.Marshal(c.Result)
+			if err != nil {
+				klog.Errorf("Failed to marshal function call result: %v", err)
+				return fmt.Errorf("failed to marshal function call result %q: %w", c.Name, err)
+			}
+			cs.history = append(cs.history, openai.ToolMessage(string(resultJSON), c.ID))
+		default:
+			klog.Warningf("Unhandled content type: %T", content)
+			return fmt.Errorf("unhandled content type: %T", content)
+		}
+	}
+	return nil
+}
+
+// prepareChatRequest creates a ChatCompletionNewParams with the current session state
+func (cs *openAIChatSession) prepareChatRequest() openai.ChatCompletionNewParams {
+	chatReq := openai.ChatCompletionNewParams{
+		Model:    openai.ChatModel(cs.model),
+		Messages: cs.history,
+	}
+	if len(cs.tools) > 0 {
+		chatReq.Tools = cs.tools
+	}
+	return chatReq
+}
+
+// convertToolCallsToFunctionCalls converts OpenAI tool calls to gollm function calls
+func convertToolCallsToFunctionCalls(toolCalls []openai.ChatCompletionMessageToolCall) ([]FunctionCall, bool) {
+	if len(toolCalls) == 0 {
+		return nil, false
+	}
+
+	calls := make([]FunctionCall, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		// Skip non-function tool calls
+		if tc.Function.Name == "" {
+			klog.V(2).Infof("Skipping non-function tool call ID: %s", tc.ID)
+			continue
+		}
+
+		// Parse function arguments with error handling
+		var args map[string]any
+		if tc.Function.Arguments != "" {
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				klog.V(2).Infof("Error unmarshalling function arguments for %s: %v", tc.Function.Name, err)
+				args = make(map[string]any)
+			}
+		} else {
+			args = make(map[string]any)
+		}
+
+		calls = append(calls, FunctionCall{
+			ID:        tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: args,
+		})
+	}
+	return calls, len(calls) > 0
+}
+
+// getOpenAIModel returns the appropriate model based on configuration and explicitly provided model name
+func getOpenAIModel(model string) string {
+	// If explicit model is provided, use it
+	if model != "" {
+		klog.V(2).Infof("Using explicitly provided model: %s", model)
+		return model
+	}
+
+	// Check configuration
+	configModel := openAIModel
+	if configModel != "" {
+		klog.V(1).Infof("Using model from config: %s", configModel)
+		return configModel
+	}
+
+	// Default model as fallback
+	klog.V(2).Info("No model specified, defaulting to gpt-4.1")
+	return "gpt-4.1"
 }
